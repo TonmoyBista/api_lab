@@ -129,11 +129,21 @@ class McpHubViewModel extends ChangeNotifier {
     }
   }
 
-  String getClaudeDesktopConfigSnippet() {
+  String get lanIp => _mcpServer.detectedLanIp;
+  String get lanSseUrl => 'http://$lanIp:${_mcpConfig.port}/sse';
+  String get localSseUrl => 'http://127.0.0.1:${_mcpConfig.port}/sse';
+
+  String getCodexCliCommand({bool useLan = false}) {
+    final url = useLan ? lanSseUrl : localSseUrl;
+    return 'codex mcp add apilab --url $url';
+  }
+
+  String getClaudeDesktopConfigSnippet({bool useLan = false}) {
+    final url = useLan ? lanSseUrl : localSseUrl;
     return '''{
   "mcpServers": {
     "apilab": {
-      "url": "http://${_mcpConfig.host}:${_mcpConfig.port}/sse"
+      "url": "$url"
     }
   }
 }''';

@@ -106,7 +106,11 @@ class _McpHubViewState extends State<McpHubView> {
                   style: TextStyle(fontSize: 12, color: AppColors.textSecondary, height: 1.4),
                 ),
                 const SizedBox(height: 12),
-                _buildInfoBadge('SSE Endpoint', vm.mcpConfig.sseUrl),
+                _buildInfoBadge('Local Endpoint', vm.localSseUrl),
+                if (vm.lanIp != '127.0.0.1' && vm.lanIp.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  _buildInfoBadge('LAN Wi-Fi Endpoint', vm.lanSseUrl),
+                ],
                 const SizedBox(height: 6),
                 _buildInfoBadge('Active Clients', '${vm.activeClients} Connected'),
                 const SizedBox(height: 14),
@@ -124,13 +128,23 @@ class _McpHubViewState extends State<McpHubView> {
                     ),
                     OutlinedButton.icon(
                       onPressed: () {
-                        Clipboard.setData(ClipboardData(text: vm.getClaudeDesktopConfigSnippet()));
+                        Clipboard.setData(ClipboardData(text: vm.getClaudeDesktopConfigSnippet(useLan: true)));
                         ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('MCP configuration copied to clipboard!')),
+                          const SnackBar(content: Text('MCP configuration (LAN) copied to clipboard!')),
                         );
                       },
                       icon: const Icon(Icons.copy, size: 14),
-                      label: const Text('Copy Config'),
+                      label: const Text('Copy JSON Config'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: () {
+                        Clipboard.setData(ClipboardData(text: vm.getCodexCliCommand(useLan: true)));
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Codex CLI command copied to clipboard!')),
+                        );
+                      },
+                      icon: const Icon(Icons.terminal, size: 14),
+                      label: const Text('Copy Codex Command'),
                     ),
                   ],
                 ),

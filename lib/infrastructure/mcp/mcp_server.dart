@@ -21,6 +21,10 @@ class McpServer {
   final List<McpLogEntry> _logs = [];
   final StreamController<List<McpLogEntry>> _logsController = StreamController<List<McpLogEntry>>.broadcast();
   final List<HttpResponse> _sseClients = [];
+  final Map<String, HttpResponse> _sseSessionClients = {};
+  Timer? _keepAliveTimer;
+
+  String _detectedLanIp = '127.0.0.1';
 
   McpServer({
     required this._trafficRepository,
@@ -31,18 +35,50 @@ class McpServer {
   });
 
   bool get isRunning => _isRunning;
+  String get detectedLanIp => _detectedLanIp;
   List<McpLogEntry> get logs => List.unmodifiable(_logs);
   Stream<List<McpLogEntry>> get logsStream => _logsController.stream;
   int get activeClients => _sseClients.length;
+
+  Future<void> _detectLanIp() async {
+    try {
+      final interfaces = await NetworkInterface.list(
+        includeLoopback: false,
+        type: InternetAddressType.IPv4,
+      );
+      for (final iface in interfaces) {
+        for (final addr in iface.addresses) {
+          if (!addr.isLoopback) {
+            _detectedLanIp = addr.address;
+            return;
+          }
+        }
+      }
+    } catch (_) {}
+  }
 
   Future<bool> start() async {
     if (_isRunning) return true;
 
     final config = _settingsRepository.getMcpConfig();
     try {
-      _httpServer = await HttpServer.bind(config.host, config.port, shared: true);
+      await _detectLanIp();
+      final bindAddress = (config.host == '127.0.0.1' || config.host == '0.0.0.0')
+          ? InternetAddress.anyIPv4
+          : config.host;
+      _httpServer = await HttpServer.bind(bindAddress, config.port, shared: true);
       _isRunning = true;
-      _log('SYSTEM', 'MCP Server started on http://${config.host}:${config.port}');
+      _log('SYSTEM', 'MCP Server active on 0.0.0.0:${config.port} (Local: 127.0.0.1:${config.port}, LAN: $_detectedLanIp:${config.port})');
+
+      _keepAliveTimer?.cancel();
+      _keepAliveTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+        for (final client in _sseClients) {
+          try {
+            client.write(': keepalive\n\n');
+            client.flush();
+          } catch (_) {}
+        }
+      });
 
       _httpServer!.listen(_handleHttpRequest);
       return true;
@@ -55,12 +91,15 @@ class McpServer {
 
   Future<void> stop() async {
     if (!_isRunning) return;
+    _keepAliveTimer?.cancel();
+    _keepAliveTimer = null;
     for (final client in _sseClients) {
       try {
         await client.close();
       } catch (_) {}
     }
     _sseClients.clear();
+    _sseSessionClients.clear();
     await _httpServer?.close(force: true);
     _httpServer = null;
     _isRunning = false;
@@ -70,8 +109,10 @@ class McpServer {
   Future<void> _handleHttpRequest(HttpRequest request) async {
     // Add CORS headers for web/desktop agents
     request.response.headers.add('Access-Control-Allow-Origin', '*');
-    request.response.headers.add('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    request.response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    request.response.headers.add('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, HEAD');
+    request.response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, X-Requested-With, mcp-session-id, x-session-id');
+    request.response.headers.add('Access-Control-Expose-Headers', '*');
+    request.response.headers.add('Access-Control-Max-Age', '86400');
 
     if (request.method == 'OPTIONS') {
       request.response.statusCode = HttpStatus.ok;
@@ -81,17 +122,19 @@ class McpServer {
 
     final path = request.uri.path;
 
-    if (path == '/sse') {
-      await _handleSse(request);
-      return;
-    }
-
-    if (path == '/messages' || path == '/jsonrpc') {
+    // 1. JSON-RPC requests via POST (Streamable HTTP /mcp, /sse, /messages, /jsonrpc, or /)
+    if (request.method == 'POST') {
       await _handleJsonRpcMessage(request);
       return;
     }
 
-    // Health check / info
+    // 2. SSE subscription stream via GET (/sse, /mcp, or text/event-stream)
+    if (path == '/sse' || path == '/mcp' || (request.headers.value('accept')?.contains('text/event-stream') ?? false)) {
+      await _handleSse(request);
+      return;
+    }
+
+    // 3. Health check / info
     if (path == '/' || path == '/info') {
       request.response.headers.contentType = ContentType.json;
       request.response.write(jsonEncode({
@@ -100,6 +143,7 @@ class McpServer {
         'status': 'online',
         'protocolVersion': '2024-11-05',
         'endpoints': {
+          'mcp': '/mcp',
           'sse': '/sse',
           'messages': '/messages',
         },
@@ -114,21 +158,28 @@ class McpServer {
   }
 
   Future<void> _handleSse(HttpRequest request) async {
-    request.response.headers.contentType = ContentType('text', 'event-stream', charset: 'utf-8');
-    request.response.headers.set('Cache-Control', 'no-cache');
+    request.response.bufferOutput = false;
+    request.response.headers.set('Content-Type', 'text/event-stream; charset=utf-8');
+    request.response.headers.set('Cache-Control', 'no-cache, no-transform');
     request.response.headers.set('Connection', 'keep-alive');
+    request.response.headers.set('X-Accel-Buffering', 'no');
 
     const uuid = Uuid();
     final sessionId = uuid.v4();
     _sseClients.add(request.response);
+    _sseSessionClients[sessionId] = request.response;
     _log('IN', 'New MCP Client connected (Session $sessionId)');
 
-    // Send endpoint event according to MCP specification
-    request.response.write('event: endpoint\ndata: /messages?sessionId=$sessionId\n\n');
+    // 1. Initial keep-alive comment
+    request.response.write(': ready\n\n');
+    // 2. Send endpoint event per MCP specification (full resolved URI)
+    final endpointUri = request.requestedUri.resolve('/messages?sessionId=$sessionId');
+    request.response.write('event: endpoint\ndata: $endpointUri\n\n');
     await request.response.flush();
 
     request.response.done.then((_) {
       _sseClients.remove(request.response);
+      _sseSessionClients.remove(sessionId);
       _log('OUT', 'MCP Client disconnected (Session $sessionId)');
     });
   }
@@ -148,15 +199,77 @@ class McpServer {
 
     _log('IN', bodyStr);
 
-    try {
-      final json = jsonDecode(bodyStr);
-      final responseObj = await processMcpRequest(json);
+    final sessionId = request.uri.queryParameters['sessionId'] ??
+        request.headers.value('mcp-session-id') ??
+        request.headers.value('x-session-id');
+    final sseClient = (sessionId != null ? _sseSessionClients[sessionId] : null) ??
+        (_sseClients.isNotEmpty ? _sseClients.last : null);
 
-      final responseStr = jsonEncode(responseObj);
+    const uuid = Uuid();
+    final currentSessionId = sessionId ?? uuid.v4();
+    request.response.headers.set('Mcp-Session-Id', currentSessionId);
+    request.response.headers.set('mcp-session-id', currentSessionId);
+    request.response.headers.set('Access-Control-Expose-Headers', 'Mcp-Session-Id, mcp-session-id, Content-Type');
+
+    try {
+      final decodedJson = jsonDecode(bodyStr);
+
+      dynamic responseData;
+      if (decodedJson is List) {
+        final batchResults = <Map<String, dynamic>>[];
+        for (final item in decodedJson) {
+          if (item is Map && (!item.containsKey('id') || item['id'] == null)) {
+            // Notification inside batch - no response per JSON-RPC 2.0
+            await processMcpRequest(item);
+          } else {
+            batchResults.add(await processMcpRequest(item));
+          }
+        }
+        if (batchResults.isEmpty) {
+          // All items were notifications
+          request.response.statusCode = HttpStatus.accepted;
+          await request.response.close();
+          return;
+        }
+        responseData = batchResults;
+      } else if (decodedJson is Map && (!decodedJson.containsKey('id') || decodedJson['id'] == null)) {
+        // Notification - execute side effects but return 202 Accepted with NO body per JSON-RPC 2.0 & Streamable HTTP
+        await processMcpRequest(decodedJson);
+        request.response.statusCode = HttpStatus.accepted;
+        await request.response.close();
+        return;
+      } else {
+        responseData = await processMcpRequest(decodedJson);
+      }
+
+      if (responseData == null) {
+        request.response.statusCode = HttpStatus.noContent;
+        await request.response.close();
+        return;
+      }
+
+      final responseStr = jsonEncode(responseData);
       _log('OUT', responseStr);
 
-      request.response.headers.contentType = ContentType.json;
-      request.response.write(responseStr);
+      // Push to SSE client if connected
+      if (sseClient != null) {
+        try {
+          sseClient.write('event: message\ndata: $responseStr\n\n');
+          await sseClient.flush();
+        } catch (_) {}
+      }
+
+      request.response.bufferOutput = false;
+      request.response.statusCode = HttpStatus.ok;
+
+      final acceptHeader = request.headers.value('accept') ?? '';
+      if (acceptHeader.contains('text/event-stream') && !acceptHeader.contains('application/json')) {
+        request.response.headers.set('Content-Type', 'text/event-stream; charset=utf-8');
+        request.response.write('event: message\ndata: $responseStr\n\n');
+      } else {
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(responseStr);
+      }
       await request.response.close();
     } catch (e) {
       final errorResponse = {
@@ -183,6 +296,11 @@ class McpServer {
     final method = requestData['method'] as String?;
     final params = (requestData['params'] as Map?) ?? {};
 
+    // Standard JSON-RPC notification handling
+    if (method == 'notifications/initialized' || method == 'notifications/cancelled') {
+      return {'jsonrpc': '2.0', 'id': id, 'result': {}};
+    }
+
     switch (method) {
       case 'initialize':
         return {
@@ -192,17 +310,17 @@ class McpServer {
             'protocolVersion': '2024-11-05',
             'capabilities': {
               'tools': {'listChanged': true},
-              'resources': {},
+              'resources': {'subscribe': false, 'listChanged': true},
+              'prompts': {'listChanged': true},
+              'logging': {},
             },
             'serverInfo': {
               'name': 'ApiLab-MCP-Server',
               'version': '1.0.0',
-            }
+            },
+            'instructions': 'ApiLab MCP server provides tools to inspect intercepted HTTP traffic, manage mock projects, and create conditional mock rules for simulating API endpoints in mobile and web applications.',
           }
         };
-
-      case 'notifications/initialized':
-        return {'jsonrpc': '2.0', 'id': id, 'result': {}};
 
       case 'resources/list':
         return {
@@ -232,6 +350,13 @@ class McpServer {
           }
         };
 
+      case 'resources/templates/list':
+        return {
+          'jsonrpc': '2.0',
+          'id': id,
+          'result': {'resourceTemplates': []}
+        };
+
       case 'resources/read':
         final uri = (params['uri'] as String?) ?? '';
         final contentStr = _readResourceContent(uri);
@@ -244,6 +369,46 @@ class McpServer {
                 'uri': uri,
                 'mimeType': 'application/json',
                 'text': contentStr,
+              }
+            ]
+          }
+        };
+
+      case 'prompts/list':
+        return {
+          'jsonrpc': '2.0',
+          'id': id,
+          'result': {
+            'prompts': [
+              {
+                'name': 'simulate_mock_scenario',
+                'description': 'Simulate an application API scenario by creating mock rules from intercepted traffic or specifications.',
+                'arguments': [
+                  {
+                    'name': 'scenario',
+                    'description': 'The scenario to simulate (e.g. login with mr x and mock profile)',
+                    'required': true,
+                  }
+                ],
+              }
+            ]
+          }
+        };
+
+      case 'prompts/get':
+        final scenarioArg = (params['arguments'] as Map?)?['scenario'] ?? 'general simulation';
+        return {
+          'jsonrpc': '2.0',
+          'id': id,
+          'result': {
+            'description': 'Prompt for scenario: $scenarioArg',
+            'messages': [
+              {
+                'role': 'user',
+                'content': {
+                  'type': 'text',
+                  'text': 'Analyze the intercepted HTTP traffic in ApiLab and create a mock project and rule for scenario: "$scenarioArg". Match the necessary endpoint and return realistic mock response payload.',
+                }
               }
             ]
           }
@@ -262,23 +427,51 @@ class McpServer {
       case 'tools/call':
         final toolName = params['name'] as String?;
         final arguments = (params['arguments'] as Map?) ?? {};
-        final resultText = await _executeTool(toolName, arguments);
+        try {
+          final resultText = await _executeTool(toolName, arguments);
+          return {
+            'jsonrpc': '2.0',
+            'id': id,
+            'result': {
+              'content': [
+                {
+                  'type': 'text',
+                  'text': resultText,
+                }
+              ],
+              'isError': false,
+            }
+          };
+        } catch (e) {
+          return {
+            'jsonrpc': '2.0',
+            'id': id,
+            'result': {
+              'content': [
+                {
+                  'type': 'text',
+                  'text': 'Error executing tool $toolName: $e',
+                }
+              ],
+              'isError': true,
+            }
+          };
+        }
+
+      case 'ping':
+        return {'jsonrpc': '2.0', 'id': id, 'result': {}};
+
+      case 'logging/setLevel':
+        return {'jsonrpc': '2.0', 'id': id, 'result': {}};
+
+      case 'completion/complete':
         return {
           'jsonrpc': '2.0',
           'id': id,
           'result': {
-            'content': [
-              {
-                'type': 'text',
-                'text': resultText,
-              }
-            ],
-            'isError': false,
+            'completion': {'values': [], 'total': 0, 'hasMore': false}
           }
         };
-
-      case 'ping':
-        return {'jsonrpc': '2.0', 'id': id, 'result': {}};
 
       default:
         return {

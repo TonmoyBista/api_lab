@@ -1,8 +1,6 @@
 import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:api_lab/domain/models/http_traffic.dart';
-import 'package:api_lab/domain/models/mock_rule.dart';
-import 'package:api_lab/domain/models/mcp_and_ai.dart';
 import 'package:api_lab/domain/use_cases/generate_mock_response_use_case.dart';
 import 'package:api_lab/domain/use_cases/replay_request_use_case.dart';
 import 'package:api_lab/data/repositories/traffic_repository_impl.dart';
