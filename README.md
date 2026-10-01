@@ -119,7 +119,6 @@ We maintain a strict two-branch workflow:
 On every push to `release`, GitHub Actions automatically compiles and packages desktop release bundles for:
 
 - **macOS (Apple Silicon M1–M4 ARM64)**: `api_lab-macos-arm64.zip`
-- **macOS (Intel x86_64)**: `api_lab-macos-intel-x64.zip`
 - **Windows (Intel/AMD64 x64)**: `api_lab-windows-x64.zip`
 - **Linux (Intel/AMD64 x64)**: `api_lab-linux-x64.tar.gz`
 - **Linux (ARM64)**: `api_lab-linux-arm64.tar.gz`
