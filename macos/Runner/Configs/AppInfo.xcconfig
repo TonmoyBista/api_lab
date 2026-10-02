@@ -5,7 +5,7 @@
 // 'flutter create' template.
 
 // The application's name. By default this is also the title of the Flutter window.
-PRODUCT_NAME = api_lab
+PRODUCT_NAME = API Lab
 
 // The application's bundle identifier
 PRODUCT_BUNDLE_IDENTIFIER = com.apilab.apiLab

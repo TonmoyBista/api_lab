@@ -111,7 +111,7 @@ class _DesktopShellState extends State<DesktopShell> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const Text(
-                        'ApiLab',
+                        'API Lab',
                         style: TextStyle(
                           fontWeight: FontWeight.bold,
                           fontSize: 15,

@@ -133,7 +133,7 @@ class ApiLabApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'ApiLab - Desktop API Testing, Mocking & MCP Suite',
+      title: 'API Lab - Desktop API Testing, Mocking & MCP Suite',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.darkTheme,
       home: const DesktopShell(),

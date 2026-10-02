@@ -1,0 +1,45 @@
+name: Development CI
+
+on:
+  push:
+    branches: [ development, develop, dev ]
+  pull_request:
+    branches: [ development, develop, dev, main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.x'
+          channel: 'stable'
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Run unit & widget tests
+        run: flutter test
+
+      - name: Enable Windows desktop
+        run: flutter config --enable-windows-desktop
+
+      - name: Build Windows Release
+        run: flutter build windows --release
+
+      - name: Archive Windows Release Bundle
+        run: |
+          Compress-Archive -Path "build\windows\x64\runner\Release\*" -DestinationPath "ApiLab_Windows_x64.zip"
+
+      - name: Upload Windows Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ApiLab_Windows_x64
+          path: ApiLab_Windows_x64.zip
