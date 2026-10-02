@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../../../../infrastructure/proxy/ssl_certificate_manager.dart';
+import '../../../../core/app_info.dart';
 import '../../../core/theme/app_theme.dart';
 import '../view_models/settings_view_model.dart';
 
@@ -330,7 +331,7 @@ curl -k -x http://${vm.lanIp}:${vm.proxyConfig.port} https://api.example.com''';
                 children: [
                   const Text('About API Lab', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
                   const SizedBox(height: 8),
-                  const Text('API Lab v1.1.0 • Desktop HTTP/HTTPS Interceptor, Mock Engine & MCP AI Agent Hub', style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+                  Text(AppInfo.fullVersionString, style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
                   const SizedBox(height: 6),
                   const Text('Architecture: MVVM + Domain-Driven Design (DDD) + Clean Code', style: TextStyle(color: AppColors.textMuted, fontSize: 11)),
                   const SizedBox(height: 6),

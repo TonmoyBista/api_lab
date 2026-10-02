@@ -96,12 +96,15 @@ jobs:
           Copy-Item "build\windows\x64\runner\Release\api_lab.exe" -Destination "ApiLab_Windows.exe"
           # Create ZIP portable bundle
           Compress-Archive -Path "build\windows\x64\runner\Release\*" -DestinationPath "ApiLab_Windows_x64.zip"
-          # Compile Inno Setup installer if available
+          # Extract version from pubspec.yaml dynamically
+          $PKG_VER = (Select-String -Path pubspec.yaml -Pattern '^version:\s*([^\+]+)').Matches.Groups[1].Value.Trim()
+          Write-Host "Detected version from pubspec.yaml: $PKG_VER"
+          # Compile Inno Setup installer if available passing dynamic version
           if (Test-Path "installer.iss") {
             if (Get-Command iscc -ErrorAction SilentlyContinue) {
-              iscc installer.iss
+              iscc "/DMyAppVersion=$PKG_VER" installer.iss
             } elseif (Test-Path "C:\Program Files (x86)\Inno Setup 6\ISCC.exe") {
-              & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
+              & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$PKG_VER" installer.iss
             }
           }
           if (Test-Path "Output\ApiLab_Windows_Installer.exe") {

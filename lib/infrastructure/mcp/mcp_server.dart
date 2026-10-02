@@ -7,6 +7,7 @@ import '../../domain/models/mcp_and_ai.dart';
 import '../../domain/models/mock_rule.dart';
 import '../../domain/repositories/repositories.dart';
 import '../../domain/use_cases/replay_request_use_case.dart';
+import '../../core/app_info.dart';
 
 class McpServer {
   final ITrafficRepository _trafficRepository;
@@ -185,7 +186,7 @@ class McpServer {
       request.response.headers.contentType = ContentType.json;
       request.response.write(jsonEncode({
         'name': 'ApiLab MCP Server',
-        'version': '1.1.0',
+        'version': AppInfo.version,
         'status': 'online',
         'protocolVersion': '2024-11-05',
         'endpoints': {
@@ -376,7 +377,7 @@ class McpServer {
             },
             'serverInfo': {
               'name': 'ApiLab-MCP-Server',
-              'version': '1.1.0',
+              'version': AppInfo.version,
             },
             'instructions': 'ApiLab MCP server provides tools to inspect intercepted HTTP traffic, manage mock projects, and create conditional mock rules for simulating API endpoints in mobile and web applications.',
           }

@@ -3,6 +3,8 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'core/app_info.dart';
+
 // Domain
 import 'domain/repositories/repositories.dart';
 import 'domain/use_cases/intercept_request_use_case.dart';
@@ -30,6 +32,7 @@ import 'ui/features/shell/desktop_shell.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await AppInfo.init();
 
   if (Platform.isMacOS) {
     try {
