@@ -151,6 +151,7 @@ class MocksViewModel extends ChangeNotifier {
   void updateEditingField({
     String? name,
     String? projectName,
+    bool? isEnabled,
     String? matchMethod,
     String? urlPattern,
     String? conditionLogic,
@@ -171,6 +172,7 @@ class MocksViewModel extends ChangeNotifier {
     _editingRule = _editingRule!.copyWith(
       name: name,
       projectName: projectName,
+      isEnabled: isEnabled,
       matchMethod: matchMethod,
       urlPattern: urlPattern,
       conditionLogic: conditionLogic,

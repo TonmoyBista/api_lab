@@ -1,8 +1,8 @@
 import 'package:package_info_plus/package_info_plus.dart';
 
 class AppInfo {
-  static String version = '1.1.0';
-  static String buildNumber = '3';
+  static String version = '1.1.1';
+  static String buildNumber = '4';
   static String appName = 'API Lab';
 
   static Future<void> init() async {

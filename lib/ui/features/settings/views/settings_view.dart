@@ -44,8 +44,66 @@ class _SettingsViewState extends State<SettingsView> {
         children: [
           const Text('Settings & Configuration', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
           const SizedBox(height: 6),
-          const Text('Configure ApiLab network proxy, MCP integration, and SSL/TLS certificates', style: TextStyle(color: AppColors.textSecondary)),
+          Text('Configure ApiLab network proxy, MCP integration, SSL/TLS certificates, and appearance', style: TextStyle(color: AppColors.textSecondary)),
           const SizedBox(height: 24),
+
+          // Theme & Appearance Card
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.palette_outlined, color: AppColors.primaryHover, size: 20),
+                      const SizedBox(width: 10),
+                      const Expanded(
+                        child: Text(
+                          'Appearance & Theme',
+                          style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Choose how ApiLab looks. Select dark, light, or match your system preferences.',
+                    style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+                  ),
+                  const SizedBox(height: 16),
+                  Builder(builder: (ctx) {
+                    final themeNotifier = ctx.watch<ThemeNotifier>();
+                    return SegmentedButton<ThemeMode>(
+                      segments: const [
+                        ButtonSegment(
+                          value: ThemeMode.dark,
+                          icon: Icon(Icons.dark_mode_outlined, size: 16),
+                          label: Text('Dark Mode'),
+                        ),
+                        ButtonSegment(
+                          value: ThemeMode.light,
+                          icon: Icon(Icons.light_mode_outlined, size: 16),
+                          label: Text('Light Mode'),
+                        ),
+                        ButtonSegment(
+                          value: ThemeMode.system,
+                          icon: Icon(Icons.brightness_auto_outlined, size: 16),
+                          label: Text('System'),
+                        ),
+                      ],
+                      selected: {themeNotifier.themeMode},
+                      onSelectionChanged: (newSelection) {
+                        themeNotifier.setMode(newSelection.first);
+                      },
+                    );
+                  }),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
 
           // Proxy Server Configuration Card
           Card(
@@ -54,11 +112,11 @@ class _SettingsViewState extends State<SettingsView> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Row(
+                  Row(
                     children: [
                       Icon(Icons.router_outlined, color: AppColors.primaryHover, size: 20),
-                      SizedBox(width: 10),
-                      Expanded(
+                      const SizedBox(width: 10),
+                      const Expanded(
                         child: Text(
                           'HTTP / HTTPS Proxy Server',
                           style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
@@ -119,11 +177,11 @@ class _SettingsViewState extends State<SettingsView> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Row(
+                  Row(
                     children: [
                       Icon(Icons.wifi, color: AppColors.primaryHover, size: 20),
-                      SizedBox(width: 10),
-                      Expanded(
+                      const SizedBox(width: 10),
+                      const Expanded(
                         child: Text(
                           'Mobile Devices & Local Wi-Fi (LAN) Setup',
                           style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
@@ -133,7 +191,7 @@ class _SettingsViewState extends State<SettingsView> {
                     ],
                   ),
                   const SizedBox(height: 12),
-                  const Text(
+                  Text(
                     'ApiLab is bound to 0.0.0.0 and accepts connections from your phone, tablet, and emulators on the same Wi-Fi network.',
                     style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
                   ),
@@ -154,15 +212,15 @@ class _SettingsViewState extends State<SettingsView> {
                         Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            const Icon(Icons.lan_outlined, size: 18, color: AppColors.primaryHover),
+                            Icon(Icons.lan_outlined, size: 18, color: AppColors.primaryHover),
                             const SizedBox(width: 10),
                             Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const Text('Local Wi-Fi Proxy Endpoint:', style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+                                Text('Local Wi-Fi Proxy Endpoint:', style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
                                 SelectableText(
                                   '${vm.lanIp}:${vm.proxyConfig.port}',
-                                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, fontFamily: 'monospace', color: AppColors.textMain),
+                                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, fontFamily: 'monospace', color: AppColors.textMain),
                                 ),
                               ],
                             ),
@@ -238,7 +296,7 @@ curl -k -x http://${vm.lanIp}:${vm.proxyConfig.port} https://api.example.com''';
                     ],
                   ),
                   const SizedBox(height: 12),
-                  const Text(
+                  Text(
                     'To decrypt and mock HTTPS traffic from apps and browsers, trust ApiLab Root CA certificate on your system.',
                     style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
                   ),
@@ -292,10 +350,10 @@ curl -k -x http://${vm.lanIp}:${vm.proxyConfig.port} https://api.example.com''';
                     length: 4,
                     child: Column(
                       children: [
-                        const TabBar(
+                        TabBar(
                           isScrollable: true,
                           labelColor: AppColors.primaryHover,
-                          tabs: [
+                          tabs: const [
                             Tab(text: 'Android'),
                             Tab(text: 'macOS'),
                             Tab(text: 'Windows'),
@@ -331,11 +389,11 @@ curl -k -x http://${vm.lanIp}:${vm.proxyConfig.port} https://api.example.com''';
                 children: [
                   const Text('About API Lab', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
                   const SizedBox(height: 8),
-                  Text(AppInfo.fullVersionString, style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+                  Text(AppInfo.fullVersionString, style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
                   const SizedBox(height: 6),
-                  const Text('Architecture: MVVM + Domain-Driven Design (DDD) + Clean Code', style: TextStyle(color: AppColors.textMuted, fontSize: 11)),
+                  Text('Architecture: MVVM + Domain-Driven Design (DDD) + Clean Code', style: TextStyle(color: AppColors.textMuted, fontSize: 11)),
                   const SizedBox(height: 6),
-                  const Text('Cross-Platform: macOS (Intel & ARM64), Windows (x64 & ARM64), Linux (x64 & ARM64)', style: TextStyle(color: AppColors.textMuted, fontSize: 11)),
+                  Text('Cross-Platform: macOS (Intel & ARM64), Windows (x64 & ARM64), Linux (x64 & ARM64)', style: TextStyle(color: AppColors.textMuted, fontSize: 11)),
                 ],
               ),
             ),
@@ -356,7 +414,7 @@ curl -k -x http://${vm.lanIp}:${vm.proxyConfig.port} https://api.example.com''';
       ),
       child: SelectableText(
         code.trim(),
-        style: const TextStyle(fontFamily: 'monospace', fontSize: 11, height: 1.4, color: AppColors.textMain),
+        style: TextStyle(fontFamily: 'monospace', fontSize: 11, height: 1.4, color: AppColors.textMain),
       ),
     );
   }

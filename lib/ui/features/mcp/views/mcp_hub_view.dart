@@ -39,7 +39,7 @@ class McpHubView extends StatelessWidget {
               children: [
                 Row(
                   children: [
-                    const Icon(Icons.hub_outlined, color: AppColors.primaryHover, size: 20),
+                    Icon(Icons.hub_outlined, color: AppColors.primaryHover, size: 20),
                     const SizedBox(width: 8),
                     const Expanded(
                       child: Text(
@@ -68,7 +68,7 @@ class McpHubView extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 12),
-                const Text(
+                Text(
                   'ApiLab exposes standard MCP tools so AI agents (Claude Desktop, Cursor, Antigravity, custom agents) can inspect traffic, replay calls, create mocks, and manage rules directly.',
                   style: TextStyle(fontSize: 12, color: AppColors.textSecondary, height: 1.4),
                 ),
@@ -137,18 +137,18 @@ class McpHubView extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Row(
+                Row(
                   children: [
                     Icon(Icons.integration_instructions_outlined, color: AppColors.primaryHover, size: 18),
-                    SizedBox(width: 8),
-                    Text(
+                    const SizedBox(width: 8),
+                    const Text(
                       'AI Client Integration Guide',
                       style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
                     ),
                   ],
                 ),
                 const SizedBox(height: 10),
-                const Text(
+                Text(
                   '1. Claude Desktop (Windows):\n'
                   '   Add snippet to %APPDATA%\\Claude\\claude_desktop_config.json.\n'
                   '   Use "Copy Windows Config" for standard stdio or "Copy SSE Config" for direct SSE.\n'
@@ -183,18 +183,18 @@ class McpHubView extends StatelessWidget {
             color: AppColors.surface,
             child: Row(
               children: [
-                const Expanded(
+                Expanded(
                   child: TabBar(
                     labelColor: AppColors.primaryHover,
                     indicatorColor: AppColors.primary,
-                    tabs: [
+                    tabs: const [
                       Tab(icon: Icon(Icons.construction_outlined, size: 16), text: 'Available MCP Tools'),
                       Tab(icon: Icon(Icons.terminal, size: 16), text: 'Live MCP Agent Logs'),
                     ],
                   ),
                 ),
                 IconButton(
-                  icon: const Icon(Icons.delete_sweep_outlined, size: 18, color: AppColors.textSecondary),
+                  icon: Icon(Icons.delete_sweep_outlined, size: 18, color: AppColors.textSecondary),
                   tooltip: 'Clear Logs',
                   onPressed: vm.clearLogs,
                 ),
@@ -219,7 +219,7 @@ class McpHubView extends StatelessWidget {
   Widget _buildToolsTab(BuildContext context, McpHubViewModel vm) {
     final tools = vm.availableTools;
     if (tools.isEmpty) {
-      return const Center(
+      return Center(
         child: Text('No MCP tools registered.', style: TextStyle(color: AppColors.textMuted)),
       );
     }
@@ -243,7 +243,7 @@ class McpHubView extends StatelessWidget {
                         color: AppColors.primary.withValues(alpha: 0.15),
                         borderRadius: BorderRadius.circular(4),
                       ),
-                      child: const Text(
+                      child: Text(
                         'TOOL',
                         style: TextStyle(color: AppColors.primary, fontSize: 10, fontWeight: FontWeight.bold),
                       ),
@@ -251,14 +251,14 @@ class McpHubView extends StatelessWidget {
                     const SizedBox(width: 8),
                     SelectableText(
                       tool.name,
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, fontFamily: 'monospace', color: AppColors.primaryHover),
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, fontFamily: 'monospace', color: AppColors.primaryHover),
                     ),
                   ],
                 ),
                 const SizedBox(height: 6),
                 Text(
                   tool.description,
-                  style: const TextStyle(fontSize: 12, color: AppColors.textSecondary, height: 1.4),
+                  style: TextStyle(fontSize: 12, color: AppColors.textSecondary, height: 1.4),
                 ),
                 if (tool.inputSchema.isNotEmpty) ...[
                   const SizedBox(height: 8),
@@ -272,7 +272,7 @@ class McpHubView extends StatelessWidget {
                     ),
                     child: SelectableText(
                       const JsonEncoder.withIndent('  ').convert(tool.inputSchema),
-                      style: const TextStyle(fontSize: 11, fontFamily: 'monospace', color: AppColors.textMuted),
+                      style: TextStyle(fontSize: 11, fontFamily: 'monospace', color: AppColors.textMuted),
                     ),
                   ),
                 ],
@@ -286,7 +286,7 @@ class McpHubView extends StatelessWidget {
 
   Widget _buildMcpLogsTab(BuildContext context, McpHubViewModel vm) {
     if (vm.logs.isEmpty) {
-      return const Center(
+      return Center(
         child: Text('No MCP requests recorded yet. Connect an AI agent via SSE.', style: TextStyle(color: AppColors.textMuted)),
       );
     }
@@ -297,7 +297,7 @@ class McpHubView extends StatelessWidget {
         final isIn = log.direction == 'IN';
         return Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-          decoration: const BoxDecoration(
+          decoration: BoxDecoration(
             border: Border(bottom: BorderSide(color: AppColors.borderSubtle)),
           ),
           child: Column(
@@ -323,14 +323,14 @@ class McpHubView extends StatelessWidget {
                   const SizedBox(width: 8),
                   Text(
                     log.timestamp.toLocal().toString().substring(11, 19),
-                    style: const TextStyle(fontSize: 11, color: AppColors.textMuted, fontFamily: 'monospace'),
+                    style: TextStyle(fontSize: 11, color: AppColors.textMuted, fontFamily: 'monospace'),
                   ),
                 ],
               ),
               const SizedBox(height: 4),
               SelectableText(
                 log.payload,
-                style: const TextStyle(fontSize: 11, fontFamily: 'monospace', color: AppColors.textMain),
+                style: TextStyle(fontSize: 11, fontFamily: 'monospace', color: AppColors.textMain),
               ),
             ],
           ),
@@ -344,12 +344,12 @@ class McpHubView extends StatelessWidget {
       children: [
         SizedBox(
           width: 120,
-          child: Text(label, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+          child: Text(label, style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
         ),
         Expanded(
           child: SelectableText(
             value,
-            style: const TextStyle(fontSize: 12, fontFamily: 'monospace', color: AppColors.primaryHover),
+            style: TextStyle(fontSize: 12, fontFamily: 'monospace', color: AppColors.primaryHover),
           ),
         ),
       ],

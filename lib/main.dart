@@ -80,6 +80,9 @@ void main() async {
   runApp(
     MultiProvider(
       providers: [
+        // Theme
+        ChangeNotifierProvider(create: (_) => ThemeNotifier()),
+
         // Repositories & Services injection
         Provider<ITrafficRepository>.value(value: trafficRepository),
         Provider<IMockRuleRepository>.value(value: mockRuleRepository),
@@ -131,10 +134,20 @@ class ApiLabApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final themeNotifier = context.watch<ThemeNotifier>();
+    AppColors.isDark = themeNotifier.isDark;
     return MaterialApp(
+      key: ValueKey(themeNotifier.themeMode),
       title: 'API Lab - Desktop API Testing, Mocking & MCP Suite',
       debugShowCheckedModeBanner: false,
-      theme: AppTheme.darkTheme,
+      theme: AppTheme.lightTheme,
+      darkTheme: AppTheme.darkTheme,
+      themeMode: themeNotifier.themeMode,
+      builder: (context, child) {
+        final brightness = Theme.of(context).brightness;
+        AppColors.isDark = brightness == Brightness.dark;
+        return child!;
+      },
       home: const DesktopShell(),
     );
   }

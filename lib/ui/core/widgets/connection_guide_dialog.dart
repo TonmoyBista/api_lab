@@ -25,7 +25,7 @@ Add header: "X-ApiLab-Target: https://real-api-server.com/endpoint"''';
       backgroundColor: AppColors.surface,
       title: Row(
         children: [
-          const Icon(Icons.devices, color: AppColors.primaryHover, size: 22),
+          Icon(Icons.devices, color: AppColors.primaryHover, size: 22),
           const SizedBox(width: 10),
           const Expanded(
             child: Text(
@@ -49,7 +49,7 @@ Add header: "X-ApiLab-Target: https://real-api-server.com/endpoint"''';
           children: [
             Text(
               'ApiLab listens on all network interfaces including your local Wi-Fi IP (${vm.lanIp}:${vm.proxyPort}).',
-              style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+              style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
             ),
             const SizedBox(height: 12),
             Container(
@@ -61,7 +61,7 @@ Add header: "X-ApiLab-Target: https://real-api-server.com/endpoint"''';
               ),
               child: SelectableText(
                 instructions,
-                style: const TextStyle(fontFamily: 'monospace', fontSize: 11, height: 1.4, color: AppColors.textMain),
+                style: TextStyle(fontFamily: 'monospace', fontSize: 11, height: 1.4, color: AppColors.textMain),
               ),
             ),
           ],

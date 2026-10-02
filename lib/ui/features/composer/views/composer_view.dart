@@ -95,9 +95,9 @@ class _ComposerViewState extends State<ComposerView> {
             color: AppColors.surfaceLight,
             child: Row(
               children: [
-                const Icon(Icons.folder_special_outlined, size: 16, color: AppColors.primaryHover),
+                Icon(Icons.folder_special_outlined, size: 16, color: AppColors.primaryHover),
                 const SizedBox(width: 8),
-                const Text(
+                Text(
                   'Collections',
                   style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: AppColors.textMain),
                 ),
@@ -123,12 +123,12 @@ class _ComposerViewState extends State<ComposerView> {
                       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                       child: Row(
                         children: [
-                          const Icon(Icons.folder_outlined, size: 14, color: AppColors.textSecondary),
+                          Icon(Icons.folder_outlined, size: 14, color: AppColors.textSecondary),
                           const SizedBox(width: 6),
                           Expanded(
                             child: Text(
                               col.name,
-                              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.textMain),
+                              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.textMain),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                             ),
@@ -141,7 +141,7 @@ class _ComposerViewState extends State<ComposerView> {
                             ),
                             child: Text(
                               '${col.requests.length}',
-                              style: const TextStyle(fontSize: 10, color: AppColors.textMuted),
+                              style: TextStyle(fontSize: 10, color: AppColors.textMuted),
                             ),
                           ),
                         ],
@@ -402,7 +402,7 @@ class _ComposerViewState extends State<ComposerView> {
                       ),
                     ),
                     IconButton(
-                      icon: const Icon(Icons.delete_outline, size: 16, color: AppColors.textMuted),
+                      icon: Icon(Icons.delete_outline, size: 16, color: AppColors.textMuted),
                       onPressed: () => vm.removeQueryParam(index),
                     ),
                   ],
@@ -469,7 +469,7 @@ class _ComposerViewState extends State<ComposerView> {
                       ),
                     ),
                     IconButton(
-                      icon: const Icon(Icons.delete_outline, size: 16, color: AppColors.textMuted),
+                      icon: Icon(Icons.delete_outline, size: 16, color: AppColors.textMuted),
                       onPressed: () => vm.removeHeader(index),
                     ),
                   ],
@@ -490,7 +490,7 @@ class _ComposerViewState extends State<ComposerView> {
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           child: Row(
             children: [
-              const Text('Body Type:', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+              Text('Body Type:', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
               const SizedBox(width: 8),
               for (final type in ['none', 'json', 'text', 'form'])
                 Padding(
@@ -531,7 +531,7 @@ class _ComposerViewState extends State<ComposerView> {
             ),
           )
         else
-          const Expanded(
+          Expanded(
             child: Center(
               child: Text('This request does not have a body', style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
             ),
@@ -548,7 +548,7 @@ class _ComposerViewState extends State<ComposerView> {
         children: [
           Row(
             children: [
-              const Text('Type: ', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+              Text('Type: ', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
               const SizedBox(width: 8),
               DropdownButton<String>(
                 value: vm.currentRequest.authType,
@@ -655,7 +655,7 @@ class _ComposerViewState extends State<ComposerView> {
           // Response body
           Expanded(
             child: res == null
-                ? const Center(
+                ? Center(
                     child: Text(
                       'Hit "Send" to execute request and inspect response',
                       style: TextStyle(color: AppColors.textMuted, fontSize: 13),
@@ -665,10 +665,10 @@ class _ComposerViewState extends State<ComposerView> {
                     length: 2,
                     child: Column(
                       children: [
-                        const TabBar(
+                        TabBar(
                           isScrollable: true,
                           labelColor: AppColors.primaryHover,
-                          tabs: [
+                          tabs: const [
                             Tab(text: 'Body'),
                             Tab(text: 'Headers'),
                           ],
@@ -692,7 +692,7 @@ class _ComposerViewState extends State<ComposerView> {
                                     padding: const EdgeInsets.symmetric(vertical: 3),
                                     child: Row(
                                       children: [
-                                        SelectableText('${e.key}: ', style: const TextStyle(color: AppColors.primaryHover, fontSize: 12, fontFamily: 'monospace')),
+                                        SelectableText('${e.key}: ', style: TextStyle(color: AppColors.primaryHover, fontSize: 12, fontFamily: 'monospace')),
                                         Expanded(
                                           child: SelectableText(e.value, style: const TextStyle(fontSize: 12, fontFamily: 'monospace')),
                                         ),

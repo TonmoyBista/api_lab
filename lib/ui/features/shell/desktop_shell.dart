@@ -46,10 +46,10 @@ class _DesktopShellState extends State<DesktopShell> {
           // Desktop Left Navigation Rail (Collapsible)
           if (_isSidebarVisible) ...[
             _buildSidebar(context, interceptorVm, mocksVm, mcpVm),
-            const VerticalDivider(width: 1, color: AppColors.border),
+            VerticalDivider(width: 1, color: AppColors.border),
           ] else ...[
             _buildCollapsedSidebar(context, interceptorVm, mocksVm, mcpVm),
-            const VerticalDivider(width: 1, color: AppColors.border),
+            VerticalDivider(width: 1, color: AppColors.border),
           ],
           // Main Workspace Area
           Expanded(
@@ -94,7 +94,7 @@ class _DesktopShellState extends State<DesktopShell> {
                   width: 30,
                   height: 30,
                   decoration: BoxDecoration(
-                    gradient: const LinearGradient(
+                    gradient: LinearGradient(
                       colors: [AppColors.primary, AppColors.secondary],
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
@@ -110,7 +110,7 @@ class _DesktopShellState extends State<DesktopShell> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
+                      Text(
                         'API Lab',
                         style: TextStyle(
                           fontWeight: FontWeight.bold,
@@ -125,7 +125,7 @@ class _DesktopShellState extends State<DesktopShell> {
                           color: AppColors.primary.withValues(alpha: 0.15),
                           borderRadius: BorderRadius.circular(3),
                         ),
-                        child: const Text(
+                        child: Text(
                           'DESKTOP SUITE',
                           style: TextStyle(fontSize: 8, color: AppColors.primaryHover, fontWeight: FontWeight.bold),
                         ),
@@ -136,7 +136,7 @@ class _DesktopShellState extends State<DesktopShell> {
                 IconButton(
                   padding: EdgeInsets.zero,
                   constraints: const BoxConstraints(),
-                  icon: const Icon(Icons.menu_open_rounded, size: 20, color: AppColors.textSecondary),
+                  icon: Icon(Icons.menu_open_rounded, size: 20, color: AppColors.textSecondary),
                   tooltip: 'Hide Sidebar',
                   onPressed: _toggleSidebar,
                 ),
@@ -168,7 +168,7 @@ class _DesktopShellState extends State<DesktopShell> {
                       ),
                     ),
                     const SizedBox(width: 6),
-                    const Text(
+                    Text(
                       'Proxy Network IP',
                       style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.textMain),
                     ),
@@ -178,19 +178,19 @@ class _DesktopShellState extends State<DesktopShell> {
                 // Localhost IP
                 Row(
                   children: [
-                    const Icon(Icons.computer, size: 12, color: AppColors.textMuted),
+                    Icon(Icons.computer, size: 12, color: AppColors.textMuted),
                     const SizedBox(width: 6),
                     Expanded(
                       child: Text(
                         '127.0.0.1:${interceptorVm.proxyPort}',
-                        style: const TextStyle(fontSize: 11, fontFamily: 'monospace', color: AppColors.textSecondary),
+                        style: TextStyle(fontSize: 11, fontFamily: 'monospace', color: AppColors.textSecondary),
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
                     IconButton(
                       padding: EdgeInsets.zero,
                       constraints: const BoxConstraints(),
-                      icon: const Icon(Icons.copy, size: 12, color: AppColors.textMuted),
+                      icon: Icon(Icons.copy, size: 12, color: AppColors.textMuted),
                       tooltip: 'Copy Localhost Proxy Address',
                       onPressed: () {
                         Clipboard.setData(ClipboardData(text: '127.0.0.1:${interceptorVm.proxyPort}'));
@@ -205,12 +205,12 @@ class _DesktopShellState extends State<DesktopShell> {
                 // Wi-Fi LAN IP
                 Row(
                   children: [
-                    const Icon(Icons.wifi, size: 12, color: AppColors.primaryHover),
+                    Icon(Icons.wifi, size: 12, color: AppColors.primaryHover),
                     const SizedBox(width: 6),
                     Expanded(
                       child: Text(
                         '${interceptorVm.lanIp}:${interceptorVm.proxyPort}',
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 11,
                           fontFamily: 'monospace',
                           color: AppColors.primaryHover,
@@ -222,7 +222,7 @@ class _DesktopShellState extends State<DesktopShell> {
                     IconButton(
                       padding: EdgeInsets.zero,
                       constraints: const BoxConstraints(),
-                      icon: const Icon(Icons.copy, size: 12, color: AppColors.primaryHover),
+                      icon: Icon(Icons.copy, size: 12, color: AppColors.primaryHover),
                       tooltip: 'Copy LAN Wi-Fi Proxy Address',
                       onPressed: () {
                         Clipboard.setData(ClipboardData(text: '${interceptorVm.lanIp}:${interceptorVm.proxyPort}'));
@@ -289,13 +289,40 @@ class _DesktopShellState extends State<DesktopShell> {
           // Bottom System Status Panel
           Container(
             padding: const EdgeInsets.all(12),
-            decoration: const BoxDecoration(
+            decoration: BoxDecoration(
               border: Border(top: BorderSide(color: AppColors.border)),
               color: AppColors.surfaceLight,
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // Theme toggle
+                Builder(builder: (ctx) {
+                  final themeNotifier = ctx.watch<ThemeNotifier>();
+                  return Row(
+                    children: [
+                      Icon(
+                        themeNotifier.isDark ? Icons.dark_mode_outlined : Icons.light_mode_outlined,
+                        size: 14,
+                        color: AppColors.textSecondary,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          themeNotifier.isDark ? 'Dark Mode' : 'Light Mode',
+                          style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                        ),
+                      ),
+                      Switch(
+                        value: !themeNotifier.isDark,
+                        onChanged: (_) => themeNotifier.toggle(),
+                        activeThumbColor: AppColors.primary,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                    ],
+                  );
+                }),
+                const SizedBox(height: 4),
                 // Proxy toggle status
                 Row(
                   children: [
@@ -342,7 +369,7 @@ class _DesktopShellState extends State<DesktopShell> {
                     Expanded(
                       child: Text(
                         mcpVm.isServerRunning ? 'MCP Server Active' : 'MCP Inactive',
-                        style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                        style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
                       ),
                     ),
                   ],
@@ -360,8 +387,9 @@ class _DesktopShellState extends State<DesktopShell> {
     required IconData icon,
     required String title,
     String? badge,
-    Color badgeColor = AppColors.primary,
+    Color? badgeColor,
   }) {
+    final effectiveBadgeColor = badgeColor ?? AppColors.primary;
     final isSelected = _selectedNavIndex == index;
 
     return Padding(
@@ -400,7 +428,7 @@ class _DesktopShellState extends State<DesktopShell> {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                   decoration: BoxDecoration(
-                    color: badgeColor.withValues(alpha: 0.2),
+                    color: effectiveBadgeColor.withValues(alpha: 0.2),
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Text(
@@ -408,7 +436,7 @@ class _DesktopShellState extends State<DesktopShell> {
                     style: TextStyle(
                       fontSize: 10,
                       fontWeight: FontWeight.bold,
-                      color: badgeColor,
+                      color: effectiveBadgeColor,
                     ),
                   ),
                 ),
@@ -434,7 +462,7 @@ class _DesktopShellState extends State<DesktopShell> {
           Container(
             padding: const EdgeInsets.symmetric(vertical: 12),
             child: IconButton(
-              icon: const Icon(Icons.menu_rounded, size: 22, color: AppColors.textMain),
+              icon: Icon(Icons.menu_rounded, size: 22, color: AppColors.textMain),
               tooltip: 'Show Sidebar',
               onPressed: _toggleSidebar,
             ),
@@ -468,6 +496,21 @@ class _DesktopShellState extends State<DesktopShell> {
           ),
 
           const Spacer(),
+          // Theme toggle icon
+          Builder(builder: (ctx) {
+            final themeNotifier = ctx.watch<ThemeNotifier>();
+            return Tooltip(
+              message: themeNotifier.isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode',
+              child: IconButton(
+                icon: Icon(
+                  themeNotifier.isDark ? Icons.light_mode_outlined : Icons.dark_mode_outlined,
+                  size: 18,
+                  color: AppColors.textSecondary,
+                ),
+                onPressed: themeNotifier.toggle,
+              ),
+            );
+          }),
           // Mini Proxy Status Dot
           Tooltip(
             message: interceptorVm.isProxyRunning
@@ -529,7 +572,7 @@ class _DesktopShellState extends State<DesktopShell> {
                     child: Container(
                       width: 6,
                       height: 6,
-                      decoration: const BoxDecoration(
+                      decoration: BoxDecoration(
                         shape: BoxShape.circle,
                         color: AppColors.primary,
                       ),
