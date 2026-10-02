@@ -143,6 +143,16 @@ class _MocksViewState extends State<MocksView> {
                       constraints: const BoxConstraints(),
                       onPressed: () => _showNewProjectDialog(context, vm),
                     ),
+                    if (vm.selectedProject != 'All Projects' && vm.selectedProject != 'Default Project') ...[
+                      const SizedBox(width: 4),
+                      IconButton(
+                        icon: const Icon(Icons.delete_outline, size: 16, color: AppColors.methodDelete),
+                        tooltip: 'Delete Project "${vm.selectedProject}"',
+                        padding: const EdgeInsets.all(4),
+                        constraints: const BoxConstraints(),
+                        onPressed: () => _confirmDeleteProject(context, vm, vm.selectedProject),
+                      ),
+                    ],
                     const SizedBox(width: 4),
                     IconButton(
                       icon: const Icon(Icons.file_upload_outlined, size: 16, color: AppColors.textSecondary),
@@ -387,16 +397,6 @@ class _MocksViewState extends State<MocksView> {
                   icon: const Icon(Icons.delete_outline, size: 18, color: AppColors.methodDelete),
                   tooltip: 'Delete Rule',
                   onPressed: () => vm.deleteRule(rule.id),
-                ),
-                const SizedBox(width: 8),
-                ElevatedButton.icon(
-                  onPressed: () => _showAiMockModal(context, vm),
-                  icon: const Icon(Icons.auto_awesome, size: 15),
-                  label: const Text('Generate with AI'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.statusMock,
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                  ),
                 ),
                 const SizedBox(width: 8),
                 ElevatedButton.icon(
@@ -1017,6 +1017,43 @@ class _MocksViewState extends State<MocksView> {
     );
   }
 
+  void _confirmDeleteProject(BuildContext context, MocksViewModel vm, String projectName) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: AppColors.methodDelete, size: 20),
+            SizedBox(width: 8),
+            Text('Delete Project'),
+          ],
+        ),
+        content: Text(
+          'Are you sure you want to delete project "$projectName"?\n\nAll mock rules in this project will also be deleted.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.methodDelete),
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await vm.deleteProject(projectName);
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Project "$projectName" deleted')),
+                );
+              }
+            },
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _handleExport(BuildContext context, MocksViewModel vm) async {
     try {
       if (Platform.isMacOS) {
@@ -1076,66 +1113,6 @@ class _MocksViewState extends State<MocksView> {
     }
   }
 
-  void _showAiMockModal(BuildContext context, MocksViewModel vm) {
-    final promptCtrl = TextEditingController(text: 'Generate realistic payload with 3-5 sample records');
-    showDialog(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
-          title: const Row(
-            children: [
-              Icon(Icons.auto_awesome, color: AppColors.statusMock, size: 20),
-              SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  'Generate Mock Data with AI',
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
-          ),
-          content: SizedBox(
-            width: 500,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Describe what data you need or specify fields and requirements:',
-                  style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: promptCtrl,
-                  maxLines: 3,
-                  decoration: const InputDecoration(
-                    hintText: 'e.g., 5 customer profiles with avatars, addresses, phone numbers, and loyalty points',
-                  ),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-            ElevatedButton.icon(
-              onPressed: () async {
-                Navigator.pop(ctx);
-                await vm.generateWithAi(prompt: promptCtrl.text.trim());
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Mock generated and applied!')),
-                  );
-                }
-              },
-              icon: const Icon(Icons.auto_awesome, size: 14),
-              label: const Text('Generate & Apply'),
-              style: ElevatedButton.styleFrom(backgroundColor: AppColors.statusMock),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 
   Widget _buildKeyValueListSection({
     required BuildContext context,

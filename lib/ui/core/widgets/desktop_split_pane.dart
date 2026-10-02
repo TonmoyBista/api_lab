@@ -7,14 +7,18 @@ class DesktopSplitPane extends StatefulWidget {
   final double initialRatio;
   final double minFirstRatio;
   final double maxFirstRatio;
+  final double minFirstWidth;
+  final double minSecondWidth;
 
   const DesktopSplitPane({
     super.key,
     required this.firstChild,
     required this.secondChild,
     this.initialRatio = 0.42,
-    this.minFirstRatio = 0.25,
-    this.maxFirstRatio = 0.75,
+    this.minFirstRatio = 0.20,
+    this.maxFirstRatio = 0.80,
+    this.minFirstWidth = 260.0,
+    this.minSecondWidth = 320.0,
   });
 
   @override
@@ -35,10 +39,9 @@ class _DesktopSplitPaneState extends State<DesktopSplitPane> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final totalWidth = constraints.maxWidth;
-        final firstWidth = (totalWidth * _ratio).clamp(
-          totalWidth * widget.minFirstRatio,
-          totalWidth * widget.maxFirstRatio,
-        );
+        final minW = widget.minFirstWidth.clamp(0.0, totalWidth > 0 ? totalWidth * 0.45 : 0.0);
+        final maxW = (totalWidth - widget.minSecondWidth).clamp(minW, totalWidth);
+        final firstWidth = (totalWidth * _ratio).clamp(minW, maxW);
 
         return Row(
           children: [
@@ -51,10 +54,8 @@ class _DesktopSplitPaneState extends State<DesktopSplitPane> {
               behavior: HitTestBehavior.translucent,
               onHorizontalDragUpdate: (details) {
                 setState(() {
-                  _ratio = ((firstWidth + details.delta.dx) / totalWidth).clamp(
-                    widget.minFirstRatio,
-                    widget.maxFirstRatio,
-                  );
+                  final newW = (firstWidth + details.delta.dx).clamp(minW, maxW);
+                  _ratio = totalWidth > 0 ? newW / totalWidth : widget.initialRatio;
                 });
               },
               child: MouseRegion(

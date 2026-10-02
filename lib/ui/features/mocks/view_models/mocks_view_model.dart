@@ -6,24 +6,18 @@ import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 import '../../../../domain/models/mock_rule.dart';
 import '../../../../domain/repositories/repositories.dart';
-import '../../../../domain/use_cases/generate_mock_response_use_case.dart';
 
 class MocksViewModel extends ChangeNotifier {
   final IMockRuleRepository _mockRuleRepository;
-  final GenerateMockResponseUseCase _generateMockUseCase;
-  final ISettingsRepository _settingsRepository;
 
   StreamSubscription<List<MockRule>>? _subscription;
   List<MockRule> _rules = [];
   MockRule? _editingRule;
-  bool _isGeneratingWithAi = false;
   String _searchFilter = '';
   String _selectedProject = 'All Projects';
 
   MocksViewModel({
     required this._mockRuleRepository,
-    required this._generateMockUseCase,
-    required this._settingsRepository,
   }) {
     _init();
   }
@@ -99,7 +93,6 @@ class MocksViewModel extends ChangeNotifier {
   }
 
   MockRule? get editingRule => _editingRule;
-  bool get isGeneratingWithAi => _isGeneratingWithAi;
   String get searchFilter => _searchFilter;
 
   void setSearchFilter(String filter) {
@@ -436,44 +429,25 @@ class MocksViewModel extends ChangeNotifier {
     return importRulesJson(content, targetProject: targetProject);
   }
 
-  Future<void> generateWithAi({
-    required String prompt,
-    String? endpoint,
-    String? method,
-    int? statusCode,
-  }) async {
-    if (_editingRule == null) return;
-    _isGeneratingWithAi = true;
-    notifyListeners();
-
-    try {
-      final config = _settingsRepository.getAiConfig();
-      final generated = await _generateMockUseCase.generate(
-        config: config,
-        endpointUrl: endpoint ?? _editingRule!.urlPattern,
-        method: method ?? _editingRule!.matchMethod,
-        statusCode: statusCode ?? _editingRule!.responseStatusCode,
-        description: prompt,
-        customSchema: _editingRule!.responseBody,
-      );
-
-      var pretty = generated;
-      try {
-        final decoded = jsonDecode(generated);
-        const encoder = JsonEncoder.withIndent('  ');
-        pretty = encoder.convert(decoded);
-      } catch (_) {}
-
-      _editingRule = _editingRule!.copyWith(
-        responseBody: pretty,
-        isAiGenerated: true,
-        description: prompt.isNotEmpty ? prompt : _editingRule!.description,
-      );
-      await saveCurrentRule();
-    } finally {
-      _isGeneratingWithAi = false;
-      notifyListeners();
+  Future<void> deleteProject(String projectName) async {
+    final trimmed = projectName.trim();
+    if (trimmed.isEmpty ||
+        trimmed.toLowerCase() == 'default project' ||
+        trimmed.toLowerCase() == 'all projects') {
+      return;
     }
+    _explicitProjects.removeWhere((p) => p.trim().toLowerCase() == trimmed.toLowerCase());
+    await _mockRuleRepository.deleteProject(trimmed);
+    if (_selectedProject.toLowerCase() == trimmed.toLowerCase()) {
+      _selectedProject = 'All Projects';
+    }
+    _rules = _mockRuleRepository.currentRules;
+    if (_rules.isNotEmpty) {
+      _editingRule = _rules.first;
+    } else {
+      _editingRule = null;
+    }
+    notifyListeners();
   }
 
   @override

@@ -288,22 +288,24 @@ curl -k -x http://${vm.lanIp}:${vm.proxyConfig.port} https://api.example.com''';
                   const Text('OS Trust Installation Commands:', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
                   const SizedBox(height: 8),
                   DefaultTabController(
-                    length: 3,
+                    length: 4,
                     child: Column(
                       children: [
                         const TabBar(
                           isScrollable: true,
                           labelColor: AppColors.primaryHover,
                           tabs: [
+                            Tab(text: 'Android'),
                             Tab(text: 'macOS'),
                             Tab(text: 'Windows'),
                             Tab(text: 'Linux'),
                           ],
                         ),
                         SizedBox(
-                          height: 120,
+                          height: 170,
                           child: TabBarView(
                             children: [
+                              _buildCodeBox(SslCertificateManager.getAndroidInstructions(vm.exportedCertPath ?? 'apilab_ca.crt')),
                               _buildCodeBox(SslCertificateManager.getMacInstructions(vm.exportedCertPath ?? '~/Documents/apilab_ca.crt')),
                               _buildCodeBox(SslCertificateManager.getWindowsInstructions(vm.exportedCertPath ?? 'C:\\Users\\...\\apilab_ca.crt')),
                               _buildCodeBox(SslCertificateManager.getLinuxInstructions(vm.exportedCertPath ?? '/path/to/apilab_ca.crt')),
@@ -328,7 +330,7 @@ curl -k -x http://${vm.lanIp}:${vm.proxyConfig.port} https://api.example.com''';
                 children: [
                   const Text('About API Lab', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
                   const SizedBox(height: 8),
-                  const Text('API Lab v1.0.1 • Desktop HTTP/HTTPS Interceptor, Mock Engine & MCP AI Agent Hub', style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+                  const Text('API Lab v1.1.0 • Desktop HTTP/HTTPS Interceptor, Mock Engine & MCP AI Agent Hub', style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
                   const SizedBox(height: 6),
                   const Text('Architecture: MVVM + Domain-Driven Design (DDD) + Clean Code', style: TextStyle(color: AppColors.textMuted, fontSize: 11)),
                   const SizedBox(height: 6),

@@ -176,7 +176,7 @@ jobs:
             PKG_VER=$(grep '^version: ' pubspec.yaml | sed 's/version: //' | sed 's/+.*//' | tr -d '[:space:]')
           fi
           if [ -z "$PKG_VER" ]; then
-            PKG_VER="1.0.1"
+            PKG_VER="1.1.0"
           fi
 
           # Define package control file with runtime dependencies

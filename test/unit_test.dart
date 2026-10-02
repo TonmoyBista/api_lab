@@ -1,9 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:api_lab/domain/models/http_traffic.dart';
 import 'package:api_lab/domain/models/mock_rule.dart';
-import 'package:api_lab/domain/models/mcp_and_ai.dart';
 import 'package:api_lab/domain/use_cases/intercept_request_use_case.dart';
-import 'package:api_lab/domain/use_cases/generate_mock_response_use_case.dart';
+import 'package:api_lab/domain/models/api_request.dart';
 import 'package:api_lab/data/repositories/mock_rule_repository_impl.dart';
 import 'package:api_lab/data/repositories/traffic_repository_impl.dart';
 import 'package:api_lab/data/repositories/settings_repository_impl.dart';
@@ -106,31 +105,47 @@ void main() {
     });
   });
 
-  group('AI Mock Response Generator Tests', () {
-    test('Generates synthetic data for users', () async {
-      final generator = GenerateMockResponseUseCase();
-      final result = await generator.generate(
-        config: const AiConfig(providerType: AiProviderType.heuristic),
-        endpointUrl: '/api/v1/users',
-        method: 'GET',
-        statusCode: 200,
-      );
+  group('Project Deletion & Replay Request Tests', () {
+    test('MockRuleRepository deletes project and its associated mock rules', () async {
+      final repo = MockRuleRepositoryImpl();
+      await repo.createProject('Temp Project');
+      expect(repo.currentProjects, contains('Temp Project'));
 
-      expect(result, contains('users'));
-      expect(result, contains('email'));
+      await repo.addRule(const MockRule(
+        id: 'temp_rule_1',
+        name: 'Temp Mock',
+        urlPattern: '*/temp*',
+        responseBody: '{"ok": true}',
+        projectName: 'Temp Project',
+      ));
+      expect(repo.currentRules.any((r) => r.id == 'temp_rule_1'), isTrue);
+
+      await repo.deleteProject('Temp Project');
+      expect(repo.currentProjects.contains('Temp Project'), isFalse);
+      expect(repo.currentRules.any((r) => r.id == 'temp_rule_1'), isFalse);
     });
 
-    test('Generates synthetic data for errors', () async {
-      final generator = GenerateMockResponseUseCase();
-      final result = await generator.generate(
-        config: const AiConfig(providerType: AiProviderType.heuristic),
-        endpointUrl: '/api/v1/checkout',
+    test('ApiRequestModel resolvedHeaders strips content-length and transport headers', () {
+      final req = ApiRequestModel(
+        id: 'req_mod_1',
+        url: 'https://example.com/api/login',
         method: 'POST',
-        statusCode: 500,
+        headers: const [
+          KeyValuePair(key: 'Content-Length', value: '55'),
+          KeyValuePair(key: 'Host', value: 'example.com'),
+          KeyValuePair(key: 'Content-Type', value: 'application/json'),
+        ],
+        bodyType: 'json',
+        bodyContent: '[{"license_key":"asdf","login":"asdf","password":"asdf6"}]', // 56 bytes
+        updatedAt: DateTime.now(),
       );
 
-      expect(result, contains('error'));
-      expect(result, contains('500'));
+      final headers = req.resolvedHeaders;
+      // Stale Content-Length of 55 must NOT be present, preventing contentLength mismatch
+      expect(headers.containsKey('Content-Length'), isFalse);
+      expect(headers.containsKey('content-length'), isFalse);
+      expect(headers.containsKey('Host'), isFalse);
+      expect(headers['Content-Type'], equals('application/json'));
     });
   });
 
@@ -140,13 +155,11 @@ void main() {
       final mockRepo = MockRuleRepositoryImpl();
       final settingsRepo = SettingsRepositoryImpl();
       final replayUseCase = ReplayRequestUseCase();
-      final generateMockUseCase = GenerateMockResponseUseCase();
 
       final mcpServer = McpServer(
         trafficRepository: trafficRepo,
         mockRuleRepository: mockRepo,
         replayRequestUseCase: replayUseCase,
-        generateMockUseCase: generateMockUseCase,
         settingsRepository: settingsRepo,
       );
 
@@ -170,7 +183,7 @@ void main() {
       final tools = toolsResponse['result']['tools'] as List;
       expect(tools.any((t) => t['name'] == 'apilab_create_mock'), isTrue);
       expect(tools.any((t) => t['name'] == 'apilab_get_traffic'), isTrue);
-      expect(tools.any((t) => t['name'] == 'apilab_generate_fake_response'), isTrue);
+      expect(tools.any((t) => t['name'] == 'apilab_delete_project'), isTrue);
     });
   });
 }

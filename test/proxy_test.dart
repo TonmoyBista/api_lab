@@ -7,6 +7,7 @@ import 'package:api_lab/domain/use_cases/intercept_request_use_case.dart';
 import 'package:api_lab/data/repositories/mock_rule_repository_impl.dart';
 import 'package:api_lab/data/repositories/traffic_repository_impl.dart';
 import 'package:api_lab/infrastructure/proxy/proxy_server.dart';
+import 'package:api_lab/infrastructure/proxy/ssl_certificate_manager.dart';
 
 void main() {
   test('ProxyServer intercepts and mocks HTTPS requests with HttpClient proxy', () async {
@@ -119,5 +120,10 @@ void main() {
       client.close();
       await proxy.stop();
     }
+  });
+
+  test('SslCertificateManager dynamically generates security context for target host', () async {
+    final context = await SslCertificateManager.getSecurityContextForHost('api.example.com');
+    expect(context, isNotNull);
   });
 }

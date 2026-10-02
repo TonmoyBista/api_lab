@@ -6,6 +6,7 @@ class StatusBadge extends StatelessWidget {
   final String? statusReason;
   final bool isMocked;
   final bool isPending;
+  final bool showReason;
 
   const StatusBadge({
     super.key,
@@ -13,6 +14,7 @@ class StatusBadge extends StatelessWidget {
     this.statusReason,
     this.isMocked = false,
     this.isPending = false,
+    this.showReason = false,
   });
 
   @override
@@ -83,7 +85,9 @@ class StatusBadge extends StatelessWidget {
             const SizedBox(width: 4),
           ],
           Text(
-            '$statusCode${statusReason != null && statusReason!.isNotEmpty ? ' $statusReason' : ''}',
+            showReason && statusReason != null && statusReason!.isNotEmpty
+                ? '$statusCode $statusReason'
+                : '$statusCode',
             style: TextStyle(
               color: isMocked ? AppColors.statusMock : color,
               fontSize: 11,

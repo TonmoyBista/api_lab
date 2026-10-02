@@ -66,7 +66,11 @@ class ComposerViewModel extends ChangeNotifier {
   }
 
   void updateUrl(String url) {
-    _currentRequest = _currentRequest.copyWith(url: url);
+    final updatedParams = ApiRequestModel.syncQueryParamsFromUrl(url, _currentRequest.queryParams);
+    _currentRequest = _currentRequest.copyWith(
+      url: url,
+      queryParams: updatedParams,
+    );
     notifyListeners();
   }
 
@@ -132,7 +136,11 @@ class ComposerViewModel extends ChangeNotifier {
   void addQueryParam() {
     final list = List<KeyValuePair>.from(_currentRequest.queryParams)
       ..add(const KeyValuePair(key: '', value: ''));
-    _currentRequest = _currentRequest.copyWith(queryParams: list);
+    final newUrl = ApiRequestModel.buildUrlWithParams(_currentRequest.url, list);
+    _currentRequest = _currentRequest.copyWith(
+      url: newUrl,
+      queryParams: list,
+    );
     notifyListeners();
   }
 
@@ -140,7 +148,11 @@ class ComposerViewModel extends ChangeNotifier {
     if (index >= 0 && index < _currentRequest.queryParams.length) {
       final list = List<KeyValuePair>.from(_currentRequest.queryParams);
       list[index] = KeyValuePair(key: key, value: value, isEnabled: isEnabled);
-      _currentRequest = _currentRequest.copyWith(queryParams: list);
+      final newUrl = ApiRequestModel.buildUrlWithParams(_currentRequest.url, list);
+      _currentRequest = _currentRequest.copyWith(
+        url: newUrl,
+        queryParams: list,
+      );
       notifyListeners();
     }
   }
@@ -148,7 +160,11 @@ class ComposerViewModel extends ChangeNotifier {
   void removeQueryParam(int index) {
     if (index >= 0 && index < _currentRequest.queryParams.length) {
       final list = List<KeyValuePair>.from(_currentRequest.queryParams)..removeAt(index);
-      _currentRequest = _currentRequest.copyWith(queryParams: list);
+      final newUrl = ApiRequestModel.buildUrlWithParams(_currentRequest.url, list);
+      _currentRequest = _currentRequest.copyWith(
+        url: newUrl,
+        queryParams: list,
+      );
       notifyListeners();
     }
   }

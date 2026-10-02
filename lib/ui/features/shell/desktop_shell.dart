@@ -273,7 +273,7 @@ class _DesktopShellState extends State<DesktopShell> {
                 _buildNavItem(
                   index: 2,
                   icon: Icons.hub_outlined,
-                  title: 'AI & MCP Hub',
+                  title: 'MCP Hub',
                   badge: mcpVm.isServerRunning ? 'MCP' : null,
                   badgeColor: AppColors.secondary,
                 ),
@@ -458,7 +458,7 @@ class _DesktopShellState extends State<DesktopShell> {
           _buildCollapsedNavItem(
             index: 2,
             icon: Icons.hub_outlined,
-            tooltip: 'AI & MCP Hub',
+            tooltip: 'MCP Hub',
             badgeCount: mcpVm.isServerRunning ? 1 : 0,
           ),
           _buildCollapsedNavItem(

@@ -1,7 +1,7 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:api_lab/domain/models/http_traffic.dart';
-import 'package:api_lab/domain/use_cases/generate_mock_response_use_case.dart';
 import 'package:api_lab/domain/use_cases/replay_request_use_case.dart';
 import 'package:api_lab/data/repositories/traffic_repository_impl.dart';
 import 'package:api_lab/data/repositories/mock_rule_repository_impl.dart';
@@ -23,7 +23,6 @@ void main() {
         trafficRepository: trafficRepo,
         mockRuleRepository: mockRepo,
         replayRequestUseCase: ReplayRequestUseCase(),
-        generateMockUseCase: GenerateMockResponseUseCase(),
         settingsRepository: settingsRepo,
       );
     });
@@ -243,6 +242,33 @@ void main() {
       final deleteResult = jsonDecode(deleteCall['result']['content'][0]['text']);
       expect(deleteResult['success'], isTrue);
       expect(mockRepo.currentRules.any((r) => r.id == ruleId), isFalse);
+    });
+
+    test('McpServer starts with resilient binding, boundPort, and handles Windows SSE endpoint normalization', () async {
+      final started = await mcpServer.start();
+      expect(started, isTrue);
+      expect(mcpServer.isRunning, isTrue);
+      expect(mcpServer.boundPort, isPositive);
+      expect(mcpServer.boundHost.isNotEmpty, isTrue);
+
+      // Verify HTTP info endpoint
+      final client = HttpClient();
+      final req = await client.getUrl(Uri.parse('http://127.0.0.1:${mcpServer.boundPort}/info/'));
+      final res = await req.close();
+      expect(res.statusCode, 200);
+      final body = await res.transform(utf8.decoder).join();
+      final json = jsonDecode(body);
+      expect(json['name'], 'ApiLab MCP Server');
+      expect(json['status'], 'online');
+
+      // Verify GET /messages returns 405 Method Not Allowed
+      final messagesGetReq = await client.getUrl(Uri.parse('http://127.0.0.1:${mcpServer.boundPort}/messages'));
+      final messagesGetRes = await messagesGetReq.close();
+      expect(messagesGetRes.statusCode, 405);
+
+      await mcpServer.stop();
+      expect(mcpServer.isRunning, isFalse);
+      client.close();
     });
   });
 }

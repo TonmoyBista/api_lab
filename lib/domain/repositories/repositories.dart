@@ -19,6 +19,7 @@ abstract class IMockRuleRepository {
   List<MockRule> get currentRules;
   List<String> get currentProjects;
   Future<void> createProject(String projectName);
+  Future<void> deleteProject(String projectName);
   Future<void> addRule(MockRule rule);
   Future<void> updateRule(MockRule rule);
   Future<void> deleteRule(String id);

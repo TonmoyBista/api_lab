@@ -235,88 +235,113 @@ class InterceptorView extends StatelessWidget {
           child: Container(
             color: isSelected ? AppColors.primary.withValues(alpha: 0.14) : Colors.transparent,
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            child: Row(
-              children: [
-                MethodBadge(method: item.request.method),
-                const SizedBox(width: 8),
-                StatusBadge(
-                  statusCode: item.response?.statusCode,
-                  statusReason: item.response?.statusReason,
-                  isMocked: item.isMocked,
-                  isPending: item.status == TrafficStatus.pending,
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final isCompact = constraints.maxWidth < 260;
+                return Row(
+                  children: [
+                    MethodBadge(method: item.request.method),
+                    const SizedBox(width: 8),
+                    StatusBadge(
+                      statusCode: item.response?.statusCode,
+                      statusReason: item.response?.statusReason,
+                      isMocked: item.isMocked,
+                      isPending: item.status == TrafficStatus.pending,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Expanded(
-                            child: Text(
-                              item.request.pathWithQuery,
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
-                                color: AppColors.textMain,
-                                fontFamily: 'monospace',
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  item.request.pathWithQuery,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                                    color: AppColors.textMain,
+                                    fontFamily: 'monospace',
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
                               ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
+                              if (!isCompact && item.request.resolvedQueryParams.isNotEmpty) ...[
+                                const SizedBox(width: 4),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                                  decoration: BoxDecoration(
+                                    color: AppColors.primary.withValues(alpha: 0.15),
+                                    borderRadius: BorderRadius.circular(3),
+                                  ),
+                                  child: Text(
+                                    '?${item.request.resolvedQueryParams.length}',
+                                    style: const TextStyle(fontSize: 9, color: AppColors.primaryHover, fontWeight: FontWeight.bold),
+                                  ),
+                                ),
+                              ],
+                            ],
                           ),
-                          if (item.request.resolvedQueryParams.isNotEmpty) ...[
-                            const SizedBox(width: 4),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                              decoration: BoxDecoration(
-                                color: AppColors.primary.withValues(alpha: 0.15),
-                                borderRadius: BorderRadius.circular(3),
-                              ),
-                              child: Text(
-                                '?${item.request.resolvedQueryParams.length}',
-                                style: const TextStyle(fontSize: 9, color: AppColors.primaryHover, fontWeight: FontWeight.bold),
-                              ),
-                            ),
-                          ],
+                          const SizedBox(height: 2),
+                          Text(
+                            item.request.host.isNotEmpty ? item.request.host : item.request.url,
+                            style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ],
                       ),
-                      const SizedBox(height: 2),
-                      Text(
-                        item.request.host.isNotEmpty ? item.request.host : item.request.url,
-                        style: const TextStyle(fontSize: 11, color: AppColors.textMuted),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text(
-                      item.response != null ? '${item.response!.durationMs} ms' : '--',
-                      style: const TextStyle(fontSize: 11, color: AppColors.textSecondary, fontFamily: 'monospace'),
                     ),
-                    Text(
-                      item.response != null ? '${(item.response!.contentLength / 1024).toStringAsFixed(1)} KB' : '--',
-                      style: const TextStyle(fontSize: 10, color: AppColors.textMuted),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (!isCompact) ...[
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Text(
+                                item.response != null ? '${item.response!.durationMs} ms' : '--',
+                                style: const TextStyle(fontSize: 11, color: AppColors.textSecondary, fontFamily: 'monospace'),
+                              ),
+                              Text(
+                                item.response != null ? '${(item.response!.contentLength / 1024).toStringAsFixed(1)} KB' : '--',
+                                style: const TextStyle(fontSize: 10, color: AppColors.textMuted),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(width: 4),
+                          IconButton(
+                            tooltip: item.isPinned ? 'Unpin item' : 'Pin item',
+                            padding: const EdgeInsets.all(4),
+                            constraints: const BoxConstraints(),
+                            icon: Icon(
+                              item.isPinned ? Icons.push_pin : Icons.push_pin_outlined,
+                              size: 14,
+                              color: item.isPinned ? AppColors.primary : AppColors.textMuted,
+                            ),
+                            onPressed: () => vm.togglePin(item.id),
+                          ),
+                          const SizedBox(width: 2),
+                        ],
+                        IconButton(
+                          tooltip: 'Delete item',
+                          padding: const EdgeInsets.all(4),
+                          constraints: const BoxConstraints(),
+                          icon: const Icon(
+                            Icons.close,
+                            size: 14,
+                            color: AppColors.textMuted,
+                          ),
+                          hoverColor: Colors.red.withValues(alpha: 0.15),
+                          onPressed: () => vm.deleteItem(item.id),
+                        ),
+                      ],
                     ),
                   ],
-                ),
-                const SizedBox(width: 4),
-                IconButton(
-                  padding: const EdgeInsets.all(4),
-                  constraints: const BoxConstraints(),
-                  icon: Icon(
-                    item.isPinned ? Icons.push_pin : Icons.push_pin_outlined,
-                    size: 14,
-                    color: item.isPinned ? AppColors.primary : AppColors.textMuted,
-                  ),
-                  onPressed: () => vm.togglePin(item.id),
-                ),
-              ],
+                );
+              },
             ),
           ),
         );
@@ -399,6 +424,21 @@ class _RequestEditorPaneState extends State<_RequestEditorPane> {
       _lastLoadedRequestId = req.id;
       _urlController.text = req.url;
       _bodyController.text = req.bodyContent;
+    } else {
+      if (_urlController.text != req.url) {
+        final selection = _urlController.selection;
+        _urlController.text = req.url;
+        if (selection.start <= req.url.length && selection.end <= req.url.length) {
+          _urlController.selection = selection;
+        }
+      }
+      if (_bodyController.text != req.bodyContent) {
+        final selection = _bodyController.selection;
+        _bodyController.text = req.bodyContent;
+        if (selection.start <= req.bodyContent.length && selection.end <= req.bodyContent.length) {
+          _bodyController.selection = selection;
+        }
+      }
     }
   }
 
@@ -755,41 +795,11 @@ class _RequestEditorPaneState extends State<_RequestEditorPane> {
             ...req.queryParams.asMap().entries.map((entry) {
               final idx = entry.key;
               final param = entry.value;
-              return Container(
-                margin: const EdgeInsets.only(bottom: 8),
-                child: Row(
-                  children: [
-                    Checkbox(
-                      value: param.isEnabled,
-                      onChanged: (val) => vm.updateQueryParam(idx, param.key, param.value, val ?? true),
-                    ),
-                    Expanded(
-                      flex: 2,
-                      child: TextFormField(
-                        key: ValueKey('${req.id}_pk_${idx}_${param.key}'),
-                        initialValue: param.key,
-                        onChanged: (val) => vm.updateQueryParam(idx, val, param.value, param.isEnabled),
-                        decoration: const InputDecoration(hintText: 'Key', contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8)),
-                        style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      flex: 3,
-                      child: TextFormField(
-                        key: ValueKey('${req.id}_pv_${idx}_${param.value}'),
-                        initialValue: param.value,
-                        onChanged: (val) => vm.updateQueryParam(idx, param.key, val, param.isEnabled),
-                        decoration: const InputDecoration(hintText: 'Value', contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8)),
-                        style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
-                      ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.close, size: 16, color: AppColors.textMuted),
-                      onPressed: () => vm.removeQueryParam(idx),
-                    ),
-                  ],
-                ),
+              return _QueryParamEditorRow(
+                key: ValueKey('${req.id}_param_$idx'),
+                param: param,
+                onChanged: (updated) => vm.updateQueryParam(idx, updated.key, updated.value, updated.isEnabled),
+                onRemove: () => vm.removeQueryParam(idx),
               );
             }),
         ],
@@ -1238,6 +1248,110 @@ class _RequestEditorPaneState extends State<_RequestEditorPane> {
               value,
               style: const TextStyle(color: AppColors.textMain, fontSize: 12, fontFamily: 'monospace'),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _QueryParamEditorRow extends StatefulWidget {
+  final KeyValuePair param;
+  final ValueChanged<KeyValuePair> onChanged;
+  final VoidCallback onRemove;
+
+  const _QueryParamEditorRow({
+    super.key,
+    required this.param,
+    required this.onChanged,
+    required this.onRemove,
+  });
+
+  @override
+  State<_QueryParamEditorRow> createState() => _QueryParamEditorRowState();
+}
+
+class _QueryParamEditorRowState extends State<_QueryParamEditorRow> {
+  late TextEditingController _keyController;
+  late TextEditingController _valController;
+
+  @override
+  void initState() {
+    super.initState();
+    _keyController = TextEditingController(text: widget.param.key);
+    _valController = TextEditingController(text: widget.param.value);
+  }
+
+  @override
+  void didUpdateWidget(covariant _QueryParamEditorRow oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_keyController.text != widget.param.key) {
+      final sel = _keyController.selection;
+      _keyController.text = widget.param.key;
+      if (sel.start <= widget.param.key.length && sel.end <= widget.param.key.length) {
+        _keyController.selection = sel;
+      }
+    }
+    if (_valController.text != widget.param.value) {
+      final sel = _valController.selection;
+      _valController.text = widget.param.value;
+      if (sel.start <= widget.param.value.length && sel.end <= widget.param.value.length) {
+        _valController.selection = sel;
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _keyController.dispose();
+    _valController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          Checkbox(
+            value: widget.param.isEnabled,
+            onChanged: (val) => widget.onChanged(
+              KeyValuePair(key: widget.param.key, value: widget.param.value, isEnabled: val ?? true),
+            ),
+          ),
+          Expanded(
+            flex: 2,
+            child: TextField(
+              controller: _keyController,
+              onChanged: (val) => widget.onChanged(
+                KeyValuePair(key: val, value: widget.param.value, isEnabled: widget.param.isEnabled),
+              ),
+              decoration: const InputDecoration(
+                hintText: 'Key',
+                contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              ),
+              style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            flex: 3,
+            child: TextField(
+              controller: _valController,
+              onChanged: (val) => widget.onChanged(
+                KeyValuePair(key: widget.param.key, value: val, isEnabled: widget.param.isEnabled),
+              ),
+              decoration: const InputDecoration(
+                hintText: 'Value',
+                contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              ),
+              style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.close, size: 16, color: AppColors.textMuted),
+            onPressed: widget.onRemove,
           ),
         ],
       ),

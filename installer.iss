@@ -1,6 +1,6 @@
 ; Script generated for Inno Setup 6
 #define MyAppName "API Lab"
-#define MyAppVersion "1.0.1"
+#define MyAppVersion "1.1.0"
 #define MyAppPublisher "Tonmoy"
 #define MyAppExeName "api_lab.exe"
 

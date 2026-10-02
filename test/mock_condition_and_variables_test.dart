@@ -4,7 +4,6 @@ import 'package:api_lab/domain/models/http_traffic.dart';
 import 'package:api_lab/domain/models/mock_rule.dart';
 import 'package:api_lab/data/repositories/mock_rule_repository_impl.dart';
 import 'package:api_lab/data/repositories/settings_repository_impl.dart';
-import 'package:api_lab/domain/use_cases/generate_mock_response_use_case.dart';
 import 'package:api_lab/ui/features/mocks/view_models/mocks_view_model.dart';
 import 'package:api_lab/ui/features/settings/view_models/settings_view_model.dart';
 import 'package:api_lab/domain/use_cases/intercept_request_use_case.dart';
@@ -419,12 +418,8 @@ void main() {
 
     test('Empty project remains visible in MocksViewModel.projects without saving rules', () {
       final mockRepo = MockRuleRepositoryImpl();
-      final settingsRepo = SettingsRepositoryImpl();
-      final aiUseCase = GenerateMockResponseUseCase();
       final vm = MocksViewModel(
         mockRuleRepository: mockRepo,
-        generateMockUseCase: aiUseCase,
-        settingsRepository: settingsRepo,
       );
 
       expect(vm.projects.contains('Brand New Empty Project'), isFalse);
@@ -438,12 +433,8 @@ void main() {
 
     test('Export to folder and import from file works without displaying JSON', () async {
       final mockRepo = MockRuleRepositoryImpl();
-      final settingsRepo = SettingsRepositoryImpl();
-      final aiUseCase = GenerateMockResponseUseCase();
       final vm = MocksViewModel(
         mockRuleRepository: mockRepo,
-        generateMockUseCase: aiUseCase,
-        settingsRepository: settingsRepo,
       );
 
       final tempDir = Directory.systemTemp.createTempSync('apilab_test_');

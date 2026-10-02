@@ -8,8 +8,21 @@ import '../models/api_request.dart';
 class ReplayRequestUseCase {
   Future<ApiResponseModel> execute(ApiRequestModel request) async {
     final uri = request.fullUri;
-    final headers = request.resolvedHeaders;
+    final rawHeaders = request.resolvedHeaders;
     final stopwatch = Stopwatch()..start();
+
+    // Sanitize headers: remove hop-by-hop and transport headers that conflict with
+    // package:http and Dart's HttpClient (such as fixed content-length, host, connection)
+    final headers = <String, String>{};
+    rawHeaders.forEach((k, v) {
+      final lk = k.toLowerCase().trim();
+      if (lk != 'content-length' &&
+          lk != 'host' &&
+          lk != 'connection' &&
+          lk != 'transfer-encoding') {
+        headers[k] = v;
+      }
+    });
 
     try {
       final ioClient = HttpClient()..badCertificateCallback = (cert, host, port) => true;

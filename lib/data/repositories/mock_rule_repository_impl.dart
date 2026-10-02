@@ -3,12 +3,33 @@ import 'package:uuid/uuid.dart';
 import '../../domain/models/http_traffic.dart';
 import '../../domain/models/mock_rule.dart';
 import '../../domain/repositories/repositories.dart';
+import '../database/app_database.dart';
 
 class MockRuleRepositoryImpl implements IMockRuleRepository {
+  final AppDatabase? database;
   final List<MockRule> _rules = [];
+  final Set<String> _explicitProjects = {'Default Project'};
   final StreamController<List<MockRule>> _controller = StreamController<List<MockRule>>.broadcast();
 
-  MockRuleRepositoryImpl() {
+  MockRuleRepositoryImpl({this.database}) {
+    _init();
+  }
+
+  Future<void> _init() async {
+    final db = database;
+    if (db != null) {
+      try {
+        await db.seedDefaultRulesIfEmpty();
+        final loadedRules = await db.getAllMockRules();
+        final loadedProjects = await db.getAllProjectNames();
+        _rules.clear();
+        _rules.addAll(loadedRules);
+        _explicitProjects.addAll(loadedProjects);
+        _emit();
+        return;
+      } catch (_) {}
+    }
+
     _seedDefaultRules();
   }
 
@@ -82,9 +103,8 @@ class MockRuleRepositoryImpl implements IMockRuleRepository {
         isAiGenerated: true,
       ),
     ]);
+    _emit();
   }
-
-  final Set<String> _explicitProjects = {'Default Project'};
 
   @override
   Stream<List<MockRule>> get rulesStream => _controller.stream;
@@ -108,8 +128,29 @@ class MockRuleRepositoryImpl implements IMockRuleRepository {
     final trimmed = projectName.trim();
     if (trimmed.isNotEmpty) {
       _explicitProjects.add(trimmed);
+      final db = database;
+      if (db != null) {
+        try {
+          await db.insertProject(trimmed);
+        } catch (_) {}
+      }
       _emit();
     }
+  }
+
+  @override
+  Future<void> deleteProject(String projectName) async {
+    final trimmed = projectName.trim();
+    if (trimmed.isEmpty || trimmed.toLowerCase() == 'default project') return;
+    _explicitProjects.removeWhere((p) => p.trim().toLowerCase() == trimmed.toLowerCase());
+    _rules.removeWhere((r) => r.projectName.trim().toLowerCase() == trimmed.toLowerCase());
+    final db = database;
+    if (db != null) {
+      try {
+        await db.deleteProject(trimmed);
+      } catch (_) {}
+    }
+    _emit();
   }
 
   @override
@@ -118,6 +159,12 @@ class MockRuleRepositoryImpl implements IMockRuleRepository {
       _explicitProjects.add(rule.projectName.trim());
     }
     _rules.insert(0, rule);
+    final db = database;
+    if (db != null) {
+      try {
+        await db.upsertMockRule(rule);
+      } catch (_) {}
+    }
     _emit();
   }
 
@@ -126,6 +173,12 @@ class MockRuleRepositoryImpl implements IMockRuleRepository {
     final index = _rules.indexWhere((r) => r.id == rule.id);
     if (index != -1) {
       _rules[index] = rule;
+      final db = database;
+      if (db != null) {
+        try {
+          await db.upsertMockRule(rule);
+        } catch (_) {}
+      }
       _emit();
     }
   }
@@ -133,6 +186,12 @@ class MockRuleRepositoryImpl implements IMockRuleRepository {
   @override
   Future<void> deleteRule(String id) async {
     _rules.removeWhere((r) => r.id == id);
+    final db = database;
+    if (db != null) {
+      try {
+        await db.deleteMockRule(id);
+      } catch (_) {}
+    }
     _emit();
   }
 
@@ -141,6 +200,12 @@ class MockRuleRepositoryImpl implements IMockRuleRepository {
     final index = _rules.indexWhere((r) => r.id == id);
     if (index != -1) {
       _rules[index] = _rules[index].copyWith(isEnabled: isEnabled);
+      final db = database;
+      if (db != null) {
+        try {
+          await db.toggleMockRule(id, isEnabled);
+        } catch (_) {}
+      }
       _emit();
     }
   }

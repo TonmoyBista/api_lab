@@ -5,11 +5,11 @@ import 'package:provider/provider.dart';
 
 // Domain
 import 'domain/repositories/repositories.dart';
-import 'domain/use_cases/generate_mock_response_use_case.dart';
 import 'domain/use_cases/intercept_request_use_case.dart';
 import 'domain/use_cases/replay_request_use_case.dart';
 
 // Data
+import 'data/database/app_database.dart';
 import 'data/repositories/collection_repository_impl.dart';
 import 'data/repositories/mock_rule_repository_impl.dart';
 import 'data/repositories/settings_repository_impl.dart';
@@ -39,9 +39,10 @@ void main() async {
     }
   }
 
-  // 1. Initialize Repositories (Data Layer)
+  // 1. Initialize Database & Repositories (Data Layer)
+  final database = AppDatabase();
   final trafficRepository = TrafficRepositoryImpl();
-  final mockRuleRepository = MockRuleRepositoryImpl();
+  final mockRuleRepository = MockRuleRepositoryImpl(database: database);
   final collectionRepository = CollectionRepositoryImpl();
   final settingsRepository = SettingsRepositoryImpl();
 
@@ -51,7 +52,6 @@ void main() async {
     trafficRepository: trafficRepository,
   );
   final replayRequestUseCase = ReplayRequestUseCase();
-  final generateMockUseCase = GenerateMockResponseUseCase();
 
   // 3. Initialize Infrastructure Services
   final proxyServer = ProxyServer(
@@ -63,7 +63,6 @@ void main() async {
     trafficRepository: trafficRepository,
     mockRuleRepository: mockRuleRepository,
     replayRequestUseCase: replayRequestUseCase,
-    generateMockUseCase: generateMockUseCase,
     settingsRepository: settingsRepository,
   );
 
@@ -104,15 +103,12 @@ void main() async {
         ChangeNotifierProvider(
           create: (_) => MocksViewModel(
             mockRuleRepository: mockRuleRepository,
-            generateMockUseCase: generateMockUseCase,
-            settingsRepository: settingsRepository,
           ),
         ),
         ChangeNotifierProvider(
           create: (_) => McpHubViewModel(
             mcpServer: mcpServer,
             settingsRepository: settingsRepository,
-            generateMockUseCase: generateMockUseCase,
           ),
         ),
         ChangeNotifierProvider(

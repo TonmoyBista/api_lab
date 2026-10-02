@@ -44,10 +44,18 @@ class _ComposerViewState extends State<ComposerView> {
 
   void _syncControllers(ComposerViewModel vm) {
     if (_urlController.text != vm.currentRequest.url) {
+      final selection = _urlController.selection;
       _urlController.text = vm.currentRequest.url;
+      if (selection.start <= vm.currentRequest.url.length && selection.end <= vm.currentRequest.url.length) {
+        _urlController.selection = selection;
+      }
     }
     if (_bodyController.text != vm.currentRequest.bodyContent) {
+      final selection = _bodyController.selection;
       _bodyController.text = vm.currentRequest.bodyContent;
+      if (selection.start <= vm.currentRequest.bodyContent.length && selection.end <= vm.currentRequest.bodyContent.length) {
+        _bodyController.selection = selection;
+      }
     }
     if (_bearerController.text != vm.currentRequest.authBearerToken) {
       _bearerController.text = vm.currentRequest.authBearerToken;

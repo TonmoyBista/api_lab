@@ -117,6 +117,13 @@ class InterceptorViewModel extends ChangeNotifier {
     _selectedItem = item;
     if (item != null) {
       final headersList = item.request.headers.entries
+          .where((e) {
+            final lk = e.key.toLowerCase().trim();
+            return lk != 'content-length' &&
+                lk != 'host' &&
+                lk != 'transfer-encoding' &&
+                lk != 'connection';
+          })
           .map((e) => KeyValuePair(key: e.key, value: e.value))
           .toList();
 
@@ -188,7 +195,11 @@ class InterceptorViewModel extends ChangeNotifier {
 
   void updateUrl(String url) {
     if (_editableRequest != null) {
-      _editableRequest = _editableRequest!.copyWith(url: url);
+      final updatedParams = ApiRequestModel.syncQueryParamsFromUrl(url, _editableRequest!.queryParams);
+      _editableRequest = _editableRequest!.copyWith(
+        url: url,
+        queryParams: updatedParams,
+      );
       notifyListeners();
     }
   }
@@ -261,7 +272,11 @@ class InterceptorViewModel extends ChangeNotifier {
     if (_editableRequest != null) {
       final list = List<KeyValuePair>.from(_editableRequest!.queryParams)
         ..add(const KeyValuePair(key: '', value: ''));
-      _editableRequest = _editableRequest!.copyWith(queryParams: list);
+      final newUrl = ApiRequestModel.buildUrlWithParams(_editableRequest!.url, list);
+      _editableRequest = _editableRequest!.copyWith(
+        url: newUrl,
+        queryParams: list,
+      );
       notifyListeners();
     }
   }
@@ -270,7 +285,11 @@ class InterceptorViewModel extends ChangeNotifier {
     if (_editableRequest != null && index >= 0 && index < _editableRequest!.queryParams.length) {
       final list = List<KeyValuePair>.from(_editableRequest!.queryParams);
       list[index] = KeyValuePair(key: key, value: value, isEnabled: isEnabled);
-      _editableRequest = _editableRequest!.copyWith(queryParams: list);
+      final newUrl = ApiRequestModel.buildUrlWithParams(_editableRequest!.url, list);
+      _editableRequest = _editableRequest!.copyWith(
+        url: newUrl,
+        queryParams: list,
+      );
       notifyListeners();
     }
   }
@@ -278,7 +297,11 @@ class InterceptorViewModel extends ChangeNotifier {
   void removeQueryParam(int index) {
     if (_editableRequest != null && index >= 0 && index < _editableRequest!.queryParams.length) {
       final list = List<KeyValuePair>.from(_editableRequest!.queryParams)..removeAt(index);
-      _editableRequest = _editableRequest!.copyWith(queryParams: list);
+      final newUrl = ApiRequestModel.buildUrlWithParams(_editableRequest!.url, list);
+      _editableRequest = _editableRequest!.copyWith(
+        url: newUrl,
+        queryParams: list,
+      );
       notifyListeners();
     }
   }

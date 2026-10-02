@@ -149,7 +149,7 @@ class ProxyServer {
 
     if (_config.enableSslMitm) {
       try {
-        final secureContext = SslCertificateManager.getSecurityContext();
+        final secureContext = await SslCertificateManager.getSecurityContextForHost(targetHost);
         final secureClient = await SecureSocket.secureServer(
           clientSocket,
           secureContext,

@@ -6,14 +6,12 @@ import '../../domain/models/api_request.dart';
 import '../../domain/models/mcp_and_ai.dart';
 import '../../domain/models/mock_rule.dart';
 import '../../domain/repositories/repositories.dart';
-import '../../domain/use_cases/generate_mock_response_use_case.dart';
 import '../../domain/use_cases/replay_request_use_case.dart';
 
 class McpServer {
   final ITrafficRepository _trafficRepository;
   final IMockRuleRepository _mockRuleRepository;
   final ReplayRequestUseCase _replayRequestUseCase;
-  final GenerateMockResponseUseCase _generateMockUseCase;
   final ISettingsRepository _settingsRepository;
 
   HttpServer? _httpServer;
@@ -25,36 +23,81 @@ class McpServer {
   Timer? _keepAliveTimer;
 
   String _detectedLanIp = '127.0.0.1';
+  int _boundPort = 8889;
+  String _boundHost = '127.0.0.1';
 
   McpServer({
     required this._trafficRepository,
     required this._mockRuleRepository,
     required this._replayRequestUseCase,
-    required this._generateMockUseCase,
     required this._settingsRepository,
   });
 
   bool get isRunning => _isRunning;
   String get detectedLanIp => _detectedLanIp;
+  int get boundPort => _httpServer?.port ?? _boundPort;
+  String get boundHost => _boundHost;
   List<McpLogEntry> get logs => List.unmodifiable(_logs);
   Stream<List<McpLogEntry>> get logsStream => _logsController.stream;
+  List<McpToolDefinition> get availableTools => _getAvailableTools();
   int get activeClients => _sseClients.length;
+
+  void clearLogs() {
+    _logs.clear();
+    _logsController.add(List.unmodifiable(_logs));
+  }
 
   Future<void> _detectLanIp() async {
     try {
       final interfaces = await NetworkInterface.list(
         includeLoopback: false,
         type: InternetAddressType.IPv4,
-      );
+      ).timeout(const Duration(milliseconds: 1500));
       for (final iface in interfaces) {
+        final name = iface.name.toLowerCase();
+        // Ignore virtual adapters that are common on Windows (WSL, Hyper-V, VMware, VirtualBox)
+        if (name.contains('vethernet') ||
+            name.contains('wsl') ||
+            name.contains('virtual') ||
+            name.contains('hyper-v') ||
+            name.contains('vmware') ||
+            name.contains('loopback')) {
+          continue;
+        }
         for (final addr in iface.addresses) {
-          if (!addr.isLoopback) {
+          if (!addr.isLoopback && !addr.address.startsWith('169.254.')) {
             _detectedLanIp = addr.address;
             return;
           }
         }
       }
     } catch (_) {}
+  }
+
+  Future<HttpServer> _bindResilient(dynamic host, int port) async {
+    // 1. Try specified target address with shared: false (Windows requires shared: false)
+    try {
+      return await HttpServer.bind(host, port, shared: false);
+    } catch (e) {
+      _log('SYSTEM', 'Primary bind on $host:$port failed ($e). Attempting loopback 127.0.0.1 fallback...');
+    }
+
+    // 2. Try loopback on requested port (Windows firewall always allows loopback)
+    try {
+      return await HttpServer.bind(InternetAddress.loopbackIPv4, port, shared: false);
+    } catch (e) {
+      _log('SYSTEM', 'Loopback bind on 127.0.0.1:$port failed ($e). Attempting fallback port ${port + 1}...');
+    }
+
+    // 3. Fallback to alternative port on loopback (in case port was in Hyper-V winnat exclusion)
+    try {
+      return await HttpServer.bind(InternetAddress.loopbackIPv4, port + 1, shared: false);
+    } catch (e) {
+      _log('SYSTEM', 'Fallback bind on 127.0.0.1:${port + 1} failed ($e). Attempting port 0 (OS assigned)...');
+    }
+
+    // 4. Any free port on loopback
+    return await HttpServer.bind(InternetAddress.loopbackIPv4, 0, shared: false);
   }
 
   Future<bool> start() async {
@@ -66,9 +109,11 @@ class McpServer {
       final bindAddress = (config.host == '127.0.0.1' || config.host == '0.0.0.0')
           ? InternetAddress.anyIPv4
           : config.host;
-      _httpServer = await HttpServer.bind(bindAddress, config.port, shared: true);
+      _httpServer = await _bindResilient(bindAddress, config.port);
+      _boundPort = _httpServer!.port;
+      _boundHost = _httpServer!.address.address;
       _isRunning = true;
-      _log('SYSTEM', 'MCP Server active on 0.0.0.0:${config.port} (Local: 127.0.0.1:${config.port}, LAN: $_detectedLanIp:${config.port})');
+      _log('SYSTEM', 'MCP Server active on $_boundHost:$_boundPort (Local: 127.0.0.1:$_boundPort, LAN: $_detectedLanIp:$_boundPort)');
 
       _keepAliveTimer?.cancel();
       _keepAliveTimer = Timer.periodic(const Duration(seconds: 15), (_) {
@@ -120,7 +165,8 @@ class McpServer {
       return;
     }
 
-    final path = request.uri.path;
+    final rawPath = request.uri.path.replaceAll(RegExp(r'/+$'), '');
+    final path = rawPath.isEmpty ? '/' : rawPath;
 
     // 1. JSON-RPC requests via POST (Streamable HTTP /mcp, /sse, /messages, /jsonrpc, or /)
     if (request.method == 'POST') {
@@ -135,11 +181,11 @@ class McpServer {
     }
 
     // 3. Health check / info
-    if (path == '/' || path == '/info') {
+    if (path == '/' || path == '/info' || path == '/health') {
       request.response.headers.contentType = ContentType.json;
       request.response.write(jsonEncode({
         'name': 'ApiLab MCP Server',
-        'version': '1.0.1',
+        'version': '1.1.0',
         'status': 'online',
         'protocolVersion': '2024-11-05',
         'endpoints': {
@@ -149,6 +195,14 @@ class McpServer {
         },
         'tools': _getAvailableTools().map((t) => t.name).toList(),
       }));
+      await request.response.close();
+      return;
+    }
+
+    if (path == '/messages' && request.method == 'GET') {
+      request.response.statusCode = HttpStatus.methodNotAllowed;
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(jsonEncode({'error': 'Method Not Allowed. Use POST for /messages.'}));
       await request.response.close();
       return;
     }
@@ -173,7 +227,13 @@ class McpServer {
     // 1. Initial keep-alive comment
     request.response.write(': ready\n\n');
     // 2. Send endpoint event per MCP specification (full resolved URI)
-    final endpointUri = request.requestedUri.resolve('/messages?sessionId=$sessionId');
+    final resolvedUri = request.requestedUri.resolve('/messages?sessionId=$sessionId');
+    // On Windows, connecting to 0.0.0.0 fails with WSAEADDRNOTAVAIL or ECONNREFUSED.
+    // If requestedUri host is 0.0.0.0 or wildcard, replace with 127.0.0.1:
+    final normalizedHost = (resolvedUri.host == '0.0.0.0' || resolvedUri.host == '::' || resolvedUri.host.isEmpty)
+        ? '127.0.0.1'
+        : resolvedUri.host;
+    final endpointUri = resolvedUri.replace(host: normalizedHost);
     request.response.write('event: endpoint\ndata: $endpointUri\n\n');
     await request.response.flush();
 
@@ -316,7 +376,7 @@ class McpServer {
             },
             'serverInfo': {
               'name': 'ApiLab-MCP-Server',
-              'version': '1.0.1',
+              'version': '1.1.0',
             },
             'instructions': 'ApiLab MCP server provides tools to inspect intercepted HTTP traffic, manage mock projects, and create conditional mock rules for simulating API endpoints in mobile and web applications.',
           }
@@ -674,16 +734,13 @@ class McpServer {
         },
       ),
       const McpToolDefinition(
-        name: 'apilab_generate_fake_response',
-        description: 'Generate realistic synthetic mock data using ApiLab AI generation engine based on an endpoint URL, status code, and description.',
+        name: 'apilab_delete_project',
+        description: 'Delete a mock project and all its associated mock rules.',
         inputSchema: {
           'type': 'object',
-          'required': ['endpointUrl', 'method'],
+          'required': ['projectName'],
           'properties': {
-            'endpointUrl': {'type': 'string', 'description': 'API endpoint URL'},
-            'method': {'type': 'string', 'description': 'GET, POST, etc.'},
-            'statusCode': {'type': 'integer', 'description': 'Desired status code (default 200)'},
-            'description': {'type': 'string', 'description': 'Description of the data needs'},
+            'projectName': {'type': 'string', 'description': 'Name of the project to delete'},
           },
         },
       ),
@@ -997,20 +1054,16 @@ class McpServer {
           'message': 'Mock rule "$id" ${targetState ? 'enabled' : 'disabled'}',
         });
 
-      case 'apilab_generate_fake_response':
-        final url = arguments['endpointUrl'] as String? ?? '';
-        final method = arguments['method'] as String? ?? 'GET';
-        final status = arguments['statusCode'] as int? ?? 200;
-        final desc = arguments['description'] as String? ?? '';
-
-        final generated = await _generateMockUseCase.generate(
-          config: _settingsRepository.getAiConfig(),
-          endpointUrl: url,
-          method: method,
-          statusCode: status,
-          description: desc,
-        );
-        return generated;
+      case 'apilab_delete_project':
+        final name = (arguments['projectName'] as String? ?? '').trim();
+        if (name.isEmpty) {
+          throw Exception('projectName is required');
+        }
+        await _mockRuleRepository.deleteProject(name);
+        return jsonEncode({
+          'success': true,
+          'message': 'Project "$name" and its associated mock rules were deleted',
+        });
 
       case 'apilab_send_request':
         final url = arguments['url'] as String? ?? '';

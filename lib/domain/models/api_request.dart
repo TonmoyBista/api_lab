@@ -71,24 +71,103 @@ class ApiRequestModel {
 
   Uri get fullUri {
     try {
-      final base = Uri.parse(url);
+      var raw = url.trim();
+      if (!raw.startsWith('http://') && !raw.startsWith('https://') && raw.isNotEmpty) {
+        raw = 'https://$raw';
+      }
+      final parsed = Uri.parse(raw);
+      if (queryParams.isEmpty) {
+        return parsed;
+      }
       final activeParams = <String, String>{};
       for (final p in queryParams) {
         if (p.isEnabled && p.key.trim().isNotEmpty) {
           activeParams[p.key.trim()] = p.value;
         }
       }
-      final mergedParams = Map<String, String>.from(base.queryParameters)..addAll(activeParams);
-      return base.replace(queryParameters: mergedParams.isEmpty ? null : mergedParams);
+      return parsed.replace(
+        queryParameters: activeParams.isEmpty
+            ? (queryParams.any((p) => p.key.trim().isNotEmpty) ? {} : (parsed.queryParameters.isEmpty ? null : parsed.queryParameters))
+            : activeParams,
+      );
     } catch (_) {
       return Uri();
     }
+  }
+
+  static List<KeyValuePair> syncQueryParamsFromUrl(String url, List<KeyValuePair> currentParams) {
+    final hashIdx = url.indexOf('#');
+    final cleanUrl = hashIdx != -1 ? url.substring(0, hashIdx) : url;
+    final queryIdx = cleanUrl.indexOf('?');
+
+    final disabledParams = currentParams.where((p) => !p.isEnabled && p.key.trim().isNotEmpty).toList();
+
+    if (queryIdx == -1 || queryIdx >= cleanUrl.length - 1) {
+      return disabledParams;
+    }
+
+    final queryString = cleanUrl.substring(queryIdx + 1);
+    final pairs = queryString.split('&');
+    final result = <KeyValuePair>[];
+
+    for (final pair in pairs) {
+      if (pair.isEmpty) continue;
+      final eqIdx = pair.indexOf('=');
+      final String k;
+      final String v;
+      if (eqIdx == -1) {
+        k = Uri.decodeQueryComponent(pair);
+        v = '';
+      } else {
+        k = Uri.decodeQueryComponent(pair.substring(0, eqIdx));
+        v = Uri.decodeQueryComponent(pair.substring(eqIdx + 1));
+      }
+      result.add(KeyValuePair(key: k, value: v, isEnabled: true));
+    }
+
+    // Preserve disabled params that were previously present (if key is not active in new URL)
+    for (final dp in disabledParams) {
+      if (!result.any((r) => r.key.trim().toLowerCase() == dp.key.trim().toLowerCase())) {
+        result.add(dp);
+      }
+    }
+
+    return result;
+  }
+
+  static String buildUrlWithParams(String currentUrl, List<KeyValuePair> params) {
+    final hashIdx = currentUrl.indexOf('#');
+    final fragment = hashIdx != -1 ? currentUrl.substring(hashIdx) : '';
+    final urlWithoutFragment = hashIdx != -1 ? currentUrl.substring(0, hashIdx) : currentUrl;
+
+    final queryIdx = urlWithoutFragment.indexOf('?');
+    final baseUrl = queryIdx != -1 ? urlWithoutFragment.substring(0, queryIdx) : urlWithoutFragment;
+
+    final activeParams = params.where((p) => p.isEnabled && p.key.trim().isNotEmpty).toList();
+    if (activeParams.isEmpty) {
+      return '$baseUrl$fragment';
+    }
+
+    final queryString = activeParams.map((p) {
+      final k = Uri.encodeQueryComponent(p.key.trim());
+      final v = Uri.encodeQueryComponent(p.value);
+      return '$k=$v';
+    }).join('&');
+
+    return '$baseUrl?$queryString$fragment';
   }
 
   Map<String, String> get resolvedHeaders {
     final map = <String, String>{};
     for (final h in headers) {
       if (h.isEnabled && h.key.trim().isNotEmpty) {
+        final lk = h.key.trim().toLowerCase();
+        if (lk == 'content-length' ||
+            lk == 'host' ||
+            lk == 'connection' ||
+            lk == 'transfer-encoding') {
+          continue;
+        }
         map[h.key.trim()] = h.value;
       }
     }
