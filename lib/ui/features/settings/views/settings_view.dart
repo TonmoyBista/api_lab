@@ -326,9 +326,9 @@ curl -k -x http://${vm.lanIp}:${vm.proxyConfig.port} https://api.example.com''';
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('About ApiLab', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
+                  const Text('About API Lab', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
                   const SizedBox(height: 8),
-                  const Text('ApiLab v1.0.0 • Desktop HTTP/HTTPS Interceptor, Mock Engine & MCP AI Agent Hub', style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+                  const Text('API Lab v1.0.1 • Desktop HTTP/HTTPS Interceptor, Mock Engine & MCP AI Agent Hub', style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
                   const SizedBox(height: 6),
                   const Text('Architecture: MVVM + Domain-Driven Design (DDD) + Clean Code', style: TextStyle(color: AppColors.textMuted, fontSize: 11)),
                   const SizedBox(height: 6),

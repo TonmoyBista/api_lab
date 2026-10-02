@@ -139,7 +139,7 @@ class McpServer {
       request.response.headers.contentType = ContentType.json;
       request.response.write(jsonEncode({
         'name': 'ApiLab MCP Server',
-        'version': '1.0.0',
+        'version': '1.0.1',
         'status': 'online',
         'protocolVersion': '2024-11-05',
         'endpoints': {
@@ -316,7 +316,7 @@ class McpServer {
             },
             'serverInfo': {
               'name': 'ApiLab-MCP-Server',
-              'version': '1.0.0',
+              'version': '1.0.1',
             },
             'instructions': 'ApiLab MCP server provides tools to inspect intercepted HTTP traffic, manage mock projects, and create conditional mock rules for simulating API endpoints in mobile and web applications.',
           }
