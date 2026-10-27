@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:uuid/uuid.dart';
 import '../../domain/models/http_traffic.dart';
 import '../../domain/models/mcp_and_ai.dart';
@@ -274,7 +275,7 @@ class ProxyServer {
         if (evalResult.isMocked && evalResult.mockResponse != null) {
           final mock = evalResult.mockResponse!;
 
-          final mockBytes = utf8.encode(mock.body);
+          final mockBytes = mock.bodyBytes ?? Uint8List.fromList(utf8.encode(mock.body));
           final resHeaderBuffer = StringBuffer();
           resHeaderBuffer.write('HTTP/1.1 ${mock.statusCode} ${mock.statusReason}\r\n');
 
@@ -315,6 +316,7 @@ class ProxyServer {
               statusReason: mock.statusReason,
               headers: sanitizedHeaders,
               body: mock.body,
+              bodyBytes: mockBytes,
               timestamp: DateTime.now(),
               durationMs: mock.durationMs,
               contentLength: mockBytes.length,
@@ -347,12 +349,17 @@ class ProxyServer {
           stopwatch.stop();
 
           final resBodyBytes = await upstreamRes.fold<List<int>>([], (p, e) => p..addAll(e));
-          final resBodyStr = utf8.decode(resBodyBytes, allowMalformed: true);
+          final resUint8 = Uint8List.fromList(resBodyBytes);
 
           final resHeadersMap = <String, String>{};
           upstreamRes.headers.forEach((name, values) {
             resHeadersMap[name] = values.join('; ');
           });
+
+          final isImg = HttpResponseData.isImageResponse(resHeadersMap, resUint8);
+          final resBodyStr = (isImg && !HttpResponseData.isSvgContentType(resHeadersMap))
+              ? '[Binary Image Data (${resUint8.length} bytes)]'
+              : utf8.decode(resUint8, allowMalformed: true);
 
           final resHeaderBuffer = StringBuffer();
           resHeaderBuffer.write('HTTP/1.1 ${upstreamRes.statusCode} ${upstreamRes.reasonPhrase}\r\n');
@@ -362,11 +369,11 @@ class ProxyServer {
               resHeaderBuffer.write('$k: $v\r\n');
             }
           });
-          resHeaderBuffer.write('Content-Length: ${resBodyBytes.length}\r\n');
+          resHeaderBuffer.write('Content-Length: ${resUint8.length}\r\n');
           resHeaderBuffer.write('Connection: close\r\n\r\n');
 
           secureClient.add(utf8.encode(resHeaderBuffer.toString()));
-          secureClient.add(resBodyBytes);
+          secureClient.add(resUint8);
           await secureClient.flush();
           await secureClient.close();
 
@@ -377,9 +384,10 @@ class ProxyServer {
               statusReason: upstreamRes.reasonPhrase,
               headers: resHeadersMap,
               body: resBodyStr,
+              bodyBytes: resUint8,
               timestamp: DateTime.now(),
               durationMs: stopwatch.elapsedMilliseconds,
-              contentLength: resBodyBytes.length,
+              contentLength: resUint8.length,
             ),
           );
         } catch (e) {
@@ -513,7 +521,7 @@ class ProxyServer {
 
     if (evalResult.isMocked && evalResult.mockResponse != null) {
       final mock = evalResult.mockResponse!;
-      final mockBytes = utf8.encode(mock.body);
+      final mockBytes = mock.bodyBytes ?? Uint8List.fromList(utf8.encode(mock.body));
       clientRequest.response.statusCode = mock.statusCode;
 
       final sanitizedHeaders = <String, String>{};
@@ -548,6 +556,7 @@ class ProxyServer {
           statusReason: mock.statusReason,
           headers: sanitizedHeaders,
           body: mock.body,
+          bodyBytes: mockBytes,
           timestamp: DateTime.now(),
           durationMs: stopwatch.elapsedMilliseconds,
           contentLength: mockBytes.length,
@@ -578,7 +587,7 @@ class ProxyServer {
       final upstreamReq = await client.openUrl(clientRequest.method, uri);
       headersMap.forEach((k, v) {
         final lk = k.toLowerCase();
-        if (lk != 'host' && lk != 'content-length') {
+        if (lk != 'host' && lk != 'content-length' && lk != 'accept-encoding') {
           upstreamReq.headers.set(k, v);
         }
       });
@@ -591,12 +600,17 @@ class ProxyServer {
       stopwatch.stop();
 
       final resBodyBytes = await upstreamRes.fold<List<int>>([], (prev, element) => prev..addAll(element));
-      final resBodyStr = utf8.decode(resBodyBytes, allowMalformed: true);
+      final resUint8 = Uint8List.fromList(resBodyBytes);
 
       final resHeadersMap = <String, String>{};
       upstreamRes.headers.forEach((name, values) {
         resHeadersMap[name] = values.join(', ');
       });
+
+      final isImg = HttpResponseData.isImageResponse(resHeadersMap, resUint8);
+      final resBodyStr = (isImg && !HttpResponseData.isSvgContentType(resHeadersMap))
+          ? '[Binary Image Data (${resUint8.length} bytes)]'
+          : utf8.decode(resUint8, allowMalformed: true);
 
       clientRequest.response.statusCode = upstreamRes.statusCode;
       resHeadersMap.forEach((k, v) {
@@ -605,7 +619,7 @@ class ProxyServer {
           clientRequest.response.headers.set(k, v);
         }
       });
-      clientRequest.response.add(resBodyBytes);
+      clientRequest.response.add(resUint8);
       await clientRequest.response.close();
 
       _interceptUseCase.completeTraffic(
@@ -615,9 +629,10 @@ class ProxyServer {
           statusReason: upstreamRes.reasonPhrase,
           headers: resHeadersMap,
           body: resBodyStr,
+          bodyBytes: resUint8,
           timestamp: DateTime.now(),
           durationMs: stopwatch.elapsedMilliseconds,
-          contentLength: resBodyBytes.length,
+          contentLength: resUint8.length,
         ),
       );
     } catch (e) {

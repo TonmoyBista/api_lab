@@ -678,12 +678,36 @@ class _ComposerViewState extends State<ComposerView> {
                             children: [
                               Padding(
                                 padding: const EdgeInsets.all(12),
-                                child: SingleChildScrollView(
-                                  child: SelectableText(
-                                    res.formattedBody.isEmpty ? '[No response body]' : res.formattedBody,
-                                    style: const TextStyle(fontFamily: 'monospace', fontSize: 12, height: 1.4),
-                                  ),
-                                ),
+                                child: res.isImage && res.imageBytes != null
+                                    ? Center(
+                                        child: Image.memory(
+                                          res.imageBytes!,
+                                          fit: BoxFit.contain,
+                                          errorBuilder: (_, _, _) => SelectableText(
+                                            res.formattedBody.isEmpty ? '[Unable to load image]' : res.formattedBody,
+                                            style: const TextStyle(fontFamily: 'monospace', fontSize: 12, height: 1.4),
+                                          ),
+                                        ),
+                                      )
+                                    : Builder(
+                                        builder: (context) {
+                                          final text = res.formattedBody.isEmpty
+                                              ? '[No response body]'
+                                              : res.formattedBody;
+                                          final lines = text.split('\n');
+                                          return ListView.builder(
+                                            itemCount: lines.length,
+                                            itemBuilder: (context, index) => SelectableText(
+                                              lines[index].isEmpty ? ' ' : lines[index],
+                                              style: const TextStyle(
+                                                fontFamily: 'monospace',
+                                                fontSize: 12,
+                                                height: 1.4,
+                                              ),
+                                            ),
+                                          );
+                                        },
+                                      ),
                               ),
                               ListView(
                                 padding: const EdgeInsets.all(12),

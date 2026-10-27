@@ -17,6 +17,7 @@ class InterceptorViewModel extends ChangeNotifier {
 
   StreamSubscription<List<TrafficItem>>? _subscription;
   List<TrafficItem> _allTraffic = [];
+  List<TrafficItem>? _cachedFilteredTraffic;
 
   TrafficItem? _selectedItem;
   ApiRequestModel? _editableRequest;
@@ -40,12 +41,27 @@ class InterceptorViewModel extends ChangeNotifier {
 
   void _init() {
     _allTraffic = _trafficRepository.currentTraffic;
+    _cachedFilteredTraffic = null;
     _subscription = _trafficRepository.trafficStream.listen((items) {
       _allTraffic = items;
+      _cachedFilteredTraffic = null;
       if (_selectedItem != null) {
         final updated = _allTraffic.where((t) => t.id == _selectedItem!.id).firstOrNull;
         if (updated != null) {
+          final hadResponse = _selectedItem!.response != null;
           _selectedItem = updated;
+          if (!hadResponse && updated.response != null && _testResponse == null) {
+            _testResponse = ApiResponseModel(
+              statusCode: updated.response!.statusCode,
+              statusReason: updated.response!.statusReason,
+              headers: updated.response!.headers,
+              body: updated.response!.body,
+              bodyBytes: updated.response!.bodyBytes,
+              durationMs: updated.response!.durationMs,
+              sizeBytes: updated.response!.contentLength,
+              timestamp: updated.response!.timestamp,
+            );
+          }
         }
       }
       notifyListeners();
@@ -72,7 +88,12 @@ class InterceptorViewModel extends ChangeNotifier {
   bool get isAutoScroll => _isAutoScroll;
 
   List<TrafficItem> get filteredTraffic {
-    return _allTraffic.where((item) {
+    if (_cachedFilteredTraffic != null) return _cachedFilteredTraffic!;
+
+    final q = _searchQuery.trim();
+    final regex = q.isNotEmpty ? RegExp(RegExp.escape(q), caseSensitive: false) : null;
+
+    _cachedFilteredTraffic = _allTraffic.where((item) {
       if (_methodFilter != 'ALL' && item.request.method.toUpperCase() != _methodFilter) {
         return false;
       }
@@ -90,18 +111,28 @@ class InterceptorViewModel extends ChangeNotifier {
         if (code < 500 || code >= 600) return false;
       }
 
-      if (_searchQuery.trim().isNotEmpty) {
-        final q = _searchQuery.trim().toLowerCase();
-        final matchesUrl = item.request.url.toLowerCase().contains(q);
-        final matchesMethod = item.request.method.toLowerCase().contains(q);
-        final matchesStatus = (item.response?.statusCode.toString() ?? '').contains(q);
-        final matchesBody = item.request.body.toLowerCase().contains(q) ||
-            (item.response?.body.toLowerCase().contains(q) ?? false);
-        return matchesUrl || matchesMethod || matchesStatus || matchesBody;
+      if (regex != null) {
+        if (regex.hasMatch(item.request.url) ||
+            regex.hasMatch(item.request.method) ||
+            regex.hasMatch(item.response?.statusCode.toString() ?? '')) {
+          return true;
+        }
+        if (item.request.body.isNotEmpty && regex.hasMatch(item.request.body)) {
+          return true;
+        }
+        final resBody = item.response?.body ?? '';
+        if (resBody.isNotEmpty) {
+          // Avoid scanning multi-megabyte response bodies on every keystroke; cap search slice to 200 KB
+          final slice = resBody.length > 200000 ? resBody.substring(0, 200000) : resBody;
+          if (regex.hasMatch(slice)) return true;
+        }
+        return false;
       }
 
       return true;
     }).toList();
+
+    return _cachedFilteredTraffic!;
   }
 
   Future<void> toggleProxy() async {
@@ -149,6 +180,7 @@ class InterceptorViewModel extends ChangeNotifier {
           statusReason: item.response!.statusReason,
           headers: item.response!.headers,
           body: item.response!.body,
+          bodyBytes: item.response!.bodyBytes,
           durationMs: item.response!.durationMs,
           sizeBytes: item.response!.contentLength,
           timestamp: item.response!.timestamp,
@@ -335,16 +367,19 @@ class InterceptorViewModel extends ChangeNotifier {
 
   void setSearchQuery(String query) {
     _searchQuery = query;
+    _cachedFilteredTraffic = null;
     notifyListeners();
   }
 
   void setMethodFilter(String method) {
     _methodFilter = method;
+    _cachedFilteredTraffic = null;
     notifyListeners();
   }
 
   void setStatusFilter(String status) {
     _statusFilter = status;
+    _cachedFilteredTraffic = null;
     notifyListeners();
   }
 
@@ -355,6 +390,7 @@ class InterceptorViewModel extends ChangeNotifier {
 
   void clearTraffic() {
     _trafficRepository.clearTraffic();
+    _cachedFilteredTraffic = null;
     _selectedItem = null;
     _editableRequest = null;
     _testResponse = null;

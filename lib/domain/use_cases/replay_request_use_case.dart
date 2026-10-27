@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:http/io_client.dart';
 import '../models/api_request.dart';
+import '../models/http_traffic.dart';
 
 class ReplayRequestUseCase {
   Future<ApiResponseModel> execute(ApiRequestModel request) async {
@@ -76,13 +77,27 @@ class ReplayRequestUseCase {
 
       stopwatch.stop();
 
+      final bodyBytes = response.bodyBytes;
+      final isImg = HttpResponseData.isImageResponse(response.headers, bodyBytes);
+      String bodyStr;
+      if (isImg && !HttpResponseData.isSvgContentType(response.headers)) {
+        bodyStr = '[Binary Image Data (${bodyBytes.length} bytes)]';
+      } else {
+        try {
+          bodyStr = response.body;
+        } catch (_) {
+          bodyStr = utf8.decode(bodyBytes, allowMalformed: true);
+        }
+      }
+
       return ApiResponseModel(
         statusCode: response.statusCode,
         statusReason: response.reasonPhrase ?? 'OK',
         headers: response.headers,
-        body: response.body,
+        body: bodyStr,
+        bodyBytes: bodyBytes,
         durationMs: stopwatch.elapsedMilliseconds,
-        sizeBytes: response.bodyBytes.length,
+        sizeBytes: bodyBytes.length,
         timestamp: DateTime.now(),
       );
     } on SocketException catch (e) {

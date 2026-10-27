@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 import '../models/http_traffic.dart';
 import '../models/mock_rule.dart';
 import '../repositories/repositories.dart';
@@ -35,7 +36,8 @@ class InterceptRequestUseCase {
 
       final resolvedBody = matchedRule.resolveResponseBody(request);
       final resolvedHeaders = matchedRule.resolveResponseHeaders(request);
-      final bodyBytes = utf8.encode(resolvedBody);
+      final decodedImgBytes = HttpResponseData.tryDecodeImageBytesFromString(resolvedBody);
+      final bodyBytes = decodedImgBytes ?? Uint8List.fromList(utf8.encode(resolvedBody));
 
       final mockResponse = HttpResponseData(
         statusCode: matchedRule.responseStatusCode,
@@ -44,6 +46,7 @@ class InterceptRequestUseCase {
             : _getStatusReason(matchedRule.responseStatusCode),
         headers: resolvedHeaders,
         body: resolvedBody,
+        bodyBytes: bodyBytes,
         timestamp: DateTime.now(),
         durationMs: matchedRule.responseDelayMs,
         contentLength: bodyBytes.length,

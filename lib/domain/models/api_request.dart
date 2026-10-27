@@ -1,4 +1,6 @@
 import 'dart:convert';
+import 'dart:typed_data';
+import 'http_traffic.dart';
 
 class KeyValuePair {
   final String key;
@@ -259,6 +261,7 @@ class ApiResponseModel {
   final String statusReason;
   final Map<String, String> headers;
   final String body;
+  final Uint8List? bodyBytes;
   final int durationMs;
   final int sizeBytes;
   final DateTime timestamp;
@@ -268,6 +271,7 @@ class ApiResponseModel {
     required this.statusReason,
     this.headers = const {},
     this.body = '',
+    this.bodyBytes,
     required this.durationMs,
     required this.sizeBytes,
     required this.timestamp,
@@ -277,8 +281,27 @@ class ApiResponseModel {
   bool get isRedirect => statusCode >= 300 && statusCode < 400;
   bool get isError => statusCode >= 400;
 
+  String get contentType {
+    for (final entry in headers.entries) {
+      if (entry.key.toLowerCase().trim() == 'content-type') {
+        return entry.value.toLowerCase().trim();
+      }
+    }
+    return '';
+  }
+
+  bool get isImage => HttpResponseData.isImageResponse(headers, bodyBytes, body: body);
+
+  Uint8List? get imageBytes {
+    if (bodyBytes != null && bodyBytes!.isNotEmpty) {
+      return bodyBytes;
+    }
+    return HttpResponseData.tryDecodeImageBytesFromString(body);
+  }
+
   String get formattedBody {
     if (body.isEmpty) return '';
+    if (body.length > 100000) return body;
     try {
       final decoded = jsonDecode(body);
       const encoder = JsonEncoder.withIndent('  ');

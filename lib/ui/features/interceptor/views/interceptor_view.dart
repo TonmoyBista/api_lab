@@ -1,4 +1,7 @@
 import 'dart:convert';
+import 'dart:io';
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -1239,7 +1242,12 @@ class _RequestEditorPaneState extends State<_RequestEditorPane> {
             _buildInfoRow('Status Code', '${item.response!.statusCode} ${item.response!.statusReason}'),
             _buildInfoRow('Roundtrip Latency', '${item.response!.durationMs} ms'),
             _buildInfoRow('Content Length', '${item.response!.contentLength} bytes'),
-            _buildInfoRow('Response Type', item.response!.isJson ? 'application/json' : 'text/plain'),
+            _buildInfoRow(
+              'Response Type',
+              item.response!.contentType.isNotEmpty
+                  ? item.response!.contentType
+                  : (item.response!.isJson ? 'application/json' : (item.response!.isImage ? 'image/*' : 'text/plain')),
+            ),
           ]),
       ],
     );
@@ -1340,10 +1348,130 @@ class _RequestEditorPaneState extends State<_RequestEditorPane> {
 }
 
 // =============================================================================
-// _ResponseBodyPanel – houses summary bar, find bar, JSON tree / raw text
+// Background Isolate Parser & Flattener for Large JSON / Text Responses
+// =============================================================================
+class _ParsedResponsePayload {
+  final dynamic parsedJson;
+  final String formattedText;
+  final List<String> rawLines;
+  final int totalJsonNodes;
+  final Set<String> initialCollapsedPaths;
+
+  const _ParsedResponsePayload({
+    required this.parsedJson,
+    required this.formattedText,
+    required this.rawLines,
+    required this.totalJsonNodes,
+    required this.initialCollapsedPaths,
+  });
+}
+
+_ParsedResponsePayload _parseAndFormatResponseIsolate(String raw) {
+  final trimmed = raw.trim();
+  if (trimmed.isEmpty) {
+    return const _ParsedResponsePayload(
+      parsedJson: null,
+      formattedText: '[Empty Response Body]',
+      rawLines: ['[Empty Response Body]'],
+      totalJsonNodes: 0,
+      initialCollapsedPaths: {},
+    );
+  }
+
+  try {
+    final decoded = jsonDecode(raw);
+    const encoder = JsonEncoder.withIndent('  ');
+    final formatted = encoder.convert(decoded);
+    final rawLines = formatted.split('\n');
+
+    int nodeCount = 0;
+    final collapsed = <String>{};
+
+    void analyzeTree(dynamic node, String path, int depth) {
+      nodeCount++;
+      if (node is Map) {
+        if (depth >= 1 && (nodeCount > 250 || node.length > 50)) {
+          collapsed.add(path);
+        }
+        for (final entry in node.entries) {
+          final childVal = entry.value;
+          if (childVal is Map || childVal is List) {
+            analyzeTree(childVal, '$path.${entry.key}', depth + 1);
+          } else {
+            nodeCount++;
+          }
+        }
+      } else if (node is List) {
+        if (depth >= 1 && (nodeCount > 250 || node.length > 50)) {
+          collapsed.add(path);
+        }
+        for (int i = 0; i < node.length; i++) {
+          final childVal = node[i];
+          if (childVal is Map || childVal is List) {
+            analyzeTree(childVal, '$path[$i]', depth + 1);
+          } else {
+            nodeCount++;
+          }
+        }
+      }
+    }
+
+    analyzeTree(decoded, r'$', 0);
+
+    return _ParsedResponsePayload(
+      parsedJson: decoded,
+      formattedText: formatted,
+      rawLines: rawLines,
+      totalJsonNodes: nodeCount,
+      initialCollapsedPaths: collapsed,
+    );
+  } catch (_) {
+    final lines = raw.split('\n');
+    return _ParsedResponsePayload(
+      parsedJson: null,
+      formattedText: raw,
+      rawLines: lines,
+      totalJsonNodes: 0,
+      initialCollapsedPaths: const {},
+    );
+  }
+}
+
+enum _FlatJsonRowKind {
+  expandableHeader,
+  closingBracket,
+  leaf,
+}
+
+class _FlatJsonRow {
+  final String path;
+  final int depth;
+  final String? keyLabel;
+  final _FlatJsonRowKind kind;
+  final dynamic value;
+  final bool isExpanded;
+  final bool isMap;
+  final int childCount;
+  final String searchText;
+
+  const _FlatJsonRow({
+    required this.path,
+    required this.depth,
+    this.keyLabel,
+    required this.kind,
+    this.value,
+    this.isExpanded = false,
+    this.isMap = false,
+    this.childCount = 0,
+    required this.searchText,
+  });
+}
+
+// =============================================================================
+// _ResponseBodyPanel – houses summary bar, find bar, image preview / JSON tree / raw text
 // =============================================================================
 class _ResponseBodyPanel extends StatefulWidget {
-  final dynamic response; // TestResponse / HttpResponse
+  final ApiResponseModel response;
   final bool autoOpenFind;
 
   const _ResponseBodyPanel({
@@ -1363,17 +1491,264 @@ class _ResponseBodyPanelState extends State<_ResponseBodyPanel> {
   int _currentMatchIndex = 0;
   final ScrollController _bodyScrollController = ScrollController();
 
-  // JSON view state
+  // JSON / Image / Virtualized view state
   bool _isJsonMode = false;
+  bool _isImageMode = false;
+  bool _isParsing = false;
+  int _parseGeneration = 0;
+
   dynamic _parsedJson;
+  String _formattedText = '';
+  List<String> _rawLines = const [];
+  String? _cachedRawImageDataText;
+
+  final Set<String> _collapsedPaths = {};
+  List<_FlatJsonRow> _flatJsonRows = const [];
+
+  // Cached search state (indices into either _flatJsonRows or _rawLines)
+  List<int> _matchedRowIndices = const [];
 
   // Focus
   final FocusNode _findFocusNode = FocusNode();
 
-  int get _totalMatches {
-    if (_findQuery.trim().isEmpty) return 0;
-    final formattedText = _formatResponseBodyStatic(widget.response.body as String);
-    return RegExp(RegExp.escape(_findQuery), caseSensitive: false).allMatches(formattedText).length;
+  String get _rawImageDataText {
+    if (_cachedRawImageDataText != null) return _cachedRawImageDataText!;
+    final res = widget.response;
+    if (res.imageBytes != null && res.imageBytes!.isNotEmpty) {
+      _cachedRawImageDataText = utf8.decode(res.imageBytes!, allowMalformed: true);
+    } else {
+      _cachedRawImageDataText = res.body;
+    }
+    return _cachedRawImageDataText!;
+  }
+
+  List<String> get _activeRawLines {
+    final res = widget.response;
+    if (res.isImage && res.imageBytes != null) {
+      return _rawImageDataText.split('\n');
+    }
+    return _rawLines;
+  }
+
+  int get _totalMatches => _matchedRowIndices.length;
+
+  void _recomputeSearchMatches({bool autoExpandJsonMatches = false}) {
+    final q = _findQuery.trim().toLowerCase();
+    if (q.isEmpty) {
+      _matchedRowIndices = const [];
+      _currentMatchIndex = 0;
+      return;
+    }
+
+    if (_isJsonMode && _parsedJson != null) {
+      if (autoExpandJsonMatches && _collapsedPaths.isNotEmpty) {
+        bool expandedAny = false;
+        void expandMatchingBranches(dynamic node, String path, List<String> ancestors) {
+          if (node is Map) {
+            for (final entry in node.entries) {
+              final kStr = '${entry.key}';
+              final childPath = '$path.$kStr';
+              final val = entry.value;
+              if (kStr.toLowerCase().contains(q)) {
+                for (final a in ancestors) {
+                  if (_collapsedPaths.remove(a)) expandedAny = true;
+                }
+                if (_collapsedPaths.remove(path)) expandedAny = true;
+              }
+              if (val is Map || val is List) {
+                expandMatchingBranches(val, childPath, [...ancestors, path]);
+              } else {
+                final vStr = val == null ? 'null' : (val is String ? '"$val"' : val.toString());
+                if (vStr.toLowerCase().contains(q)) {
+                  for (final a in ancestors) {
+                    if (_collapsedPaths.remove(a)) expandedAny = true;
+                  }
+                  if (_collapsedPaths.remove(path)) expandedAny = true;
+                }
+              }
+            }
+          } else if (node is List) {
+            for (int i = 0; i < node.length; i++) {
+              final childPath = '$path[$i]';
+              final val = node[i];
+              if (val is Map || val is List) {
+                expandMatchingBranches(val, childPath, [...ancestors, path]);
+              } else {
+                final vStr = val == null ? 'null' : (val is String ? '"$val"' : val.toString());
+                if (vStr.toLowerCase().contains(q)) {
+                  for (final a in ancestors) {
+                    if (_collapsedPaths.remove(a)) expandedAny = true;
+                  }
+                  if (_collapsedPaths.remove(path)) expandedAny = true;
+                }
+              }
+            }
+          }
+        }
+
+        expandMatchingBranches(_parsedJson, r'$', []);
+        if (expandedAny) {
+          _rebuildFlatJsonRows();
+        }
+      }
+
+      final matches = <int>[];
+      for (int i = 0; i < _flatJsonRows.length; i++) {
+        if (_flatJsonRows[i].searchText.toLowerCase().contains(q)) {
+          matches.add(i);
+        }
+      }
+      _matchedRowIndices = matches;
+    } else {
+      final lines = _activeRawLines;
+      final matches = <int>[];
+      for (int i = 0; i < lines.length; i++) {
+        if (lines[i].toLowerCase().contains(q)) {
+          matches.add(i);
+        }
+      }
+      _matchedRowIndices = matches;
+    }
+
+    if (_currentMatchIndex >= _matchedRowIndices.length) {
+      _currentMatchIndex = 0;
+    }
+  }
+
+  void _rebuildFlatJsonRows() {
+    if (_parsedJson == null) {
+      _flatJsonRows = const [];
+      return;
+    }
+    final rows = <_FlatJsonRow>[];
+
+    void visit(dynamic node, String path, int depth, String? keyLabel) {
+      if (node is Map) {
+        final isExpanded = !_collapsedPaths.contains(path);
+        final preview = node.isEmpty
+            ? '{}'
+            : '{…} (${node.length} key${node.length == 1 ? '' : 's'})';
+        final headerSearch = keyLabel != null
+            ? '"$keyLabel": ${isExpanded ? '{' : preview}'
+            : (isExpanded ? '{' : preview);
+        rows.add(_FlatJsonRow(
+          path: path,
+          depth: depth,
+          keyLabel: keyLabel,
+          kind: _FlatJsonRowKind.expandableHeader,
+          value: node,
+          isExpanded: isExpanded,
+          isMap: true,
+          childCount: node.length,
+          searchText: headerSearch,
+        ));
+        if (isExpanded) {
+          for (final entry in node.entries) {
+            final k = '${entry.key}';
+            visit(entry.value, '$path.$k', depth + 1, k);
+          }
+          rows.add(_FlatJsonRow(
+            path: '$path#close',
+            depth: depth,
+            kind: _FlatJsonRowKind.closingBracket,
+            isMap: true,
+            searchText: '}',
+          ));
+        }
+      } else if (node is List) {
+        final isExpanded = !_collapsedPaths.contains(path);
+        final preview = node.isEmpty
+            ? '[]'
+            : '[…] (${node.length} item${node.length == 1 ? '' : 's'})';
+        final headerSearch = keyLabel != null
+            ? '$keyLabel: ${isExpanded ? '[' : preview}'
+            : (isExpanded ? '[' : preview);
+        rows.add(_FlatJsonRow(
+          path: path,
+          depth: depth,
+          keyLabel: keyLabel,
+          kind: _FlatJsonRowKind.expandableHeader,
+          value: node,
+          isExpanded: isExpanded,
+          isMap: false,
+          childCount: node.length,
+          searchText: headerSearch,
+        ));
+        if (isExpanded) {
+          for (int i = 0; i < node.length; i++) {
+            visit(node[i], '$path[$i]', depth + 1, '[$i]');
+          }
+          rows.add(_FlatJsonRow(
+            path: '$path#close',
+            depth: depth,
+            kind: _FlatJsonRowKind.closingBracket,
+            isMap: false,
+            searchText: ']',
+          ));
+        }
+      } else {
+        final valStr = node == null ? 'null' : (node is String ? '"$node"' : node.toString());
+        final searchStr = keyLabel != null ? '"$keyLabel": $valStr' : valStr;
+        rows.add(_FlatJsonRow(
+          path: path,
+          depth: depth,
+          keyLabel: keyLabel,
+          kind: _FlatJsonRowKind.leaf,
+          value: node,
+          searchText: searchStr,
+        ));
+      }
+    }
+
+    visit(_parsedJson, r'$', 0, null);
+    _flatJsonRows = rows;
+  }
+
+  void _toggleNodeExpansion(String path) {
+    setState(() {
+      if (_collapsedPaths.contains(path)) {
+        _collapsedPaths.remove(path);
+      } else {
+        _collapsedPaths.add(path);
+      }
+      _rebuildFlatJsonRows();
+      _recomputeSearchMatches(autoExpandJsonMatches: false);
+    });
+  }
+
+  void _expandAllNodes() {
+    setState(() {
+      _collapsedPaths.clear();
+      _rebuildFlatJsonRows();
+      _recomputeSearchMatches(autoExpandJsonMatches: false);
+    });
+  }
+
+  void _collapseAllNodes() {
+    if (_parsedJson == null) return;
+    setState(() {
+      _collapsedPaths.clear();
+      void collectAll(dynamic node, String path, int depth) {
+        if (node is Map) {
+          if (depth >= 1) _collapsedPaths.add(path);
+          for (final entry in node.entries) {
+            if (entry.value is Map || entry.value is List) {
+              collectAll(entry.value, '$path.${entry.key}', depth + 1);
+            }
+          }
+        } else if (node is List) {
+          if (depth >= 1) _collapsedPaths.add(path);
+          for (int i = 0; i < node.length; i++) {
+            if (node[i] is Map || node[i] is List) {
+              collectAll(node[i], '$path[$i]', depth + 1);
+            }
+          }
+        }
+      }
+      collectAll(_parsedJson, r'$', 0);
+      _rebuildFlatJsonRows();
+      _recomputeSearchMatches(autoExpandJsonMatches: false);
+    });
   }
 
   void _nextMatch() {
@@ -1396,26 +1771,16 @@ class _ResponseBodyPanelState extends State<_ResponseBodyPanel> {
 
   void _scrollToCurrentMatch() {
     if (!_bodyScrollController.hasClients) return;
-    final formattedText = _formatResponseBodyStatic(widget.response.body as String);
-    final matches = RegExp(RegExp.escape(_findQuery), caseSensitive: false).allMatches(formattedText).toList();
-    if (matches.isEmpty || _currentMatchIndex >= matches.length) return;
+    if (_matchedRowIndices.isEmpty || _currentMatchIndex >= _matchedRowIndices.length) return;
 
-    final match = matches[_currentMatchIndex];
-    final beforeText = formattedText.substring(0, match.start);
-    final lineNumber = '\n'.allMatches(beforeText).length;
-    final totalLines = '\n'.allMatches(formattedText).length + 1;
-
+    final rowIndex = _matchedRowIndices[_currentMatchIndex];
+    const estimatedRowHeight = 22.0;
     final maxScroll = _bodyScrollController.position.maxScrollExtent;
-    double targetOffset;
-    if (!_isJsonMode) {
-      targetOffset = (lineNumber * 17.5) - 60;
-    } else {
-      targetOffset = (lineNumber / totalLines) * maxScroll;
-    }
-    targetOffset = targetOffset.clamp(0.0, maxScroll);
+    final targetOffset = ((rowIndex * estimatedRowHeight) - 80.0).clamp(0.0, maxScroll);
+
     _bodyScrollController.animateTo(
       targetOffset,
-      duration: const Duration(milliseconds: 220),
+      duration: const Duration(milliseconds: 180),
       curve: Curves.easeOutCubic,
     );
   }
@@ -1423,7 +1788,7 @@ class _ResponseBodyPanelState extends State<_ResponseBodyPanel> {
   @override
   void initState() {
     super.initState();
-    _tryParseJson();
+    _prepareResponseData();
     HardwareKeyboard.instance.addHandler(_handleKeyEvent);
     if (widget.autoOpenFind) {
       _findBarVisible = true;
@@ -1443,7 +1808,7 @@ class _ResponseBodyPanelState extends State<_ResponseBodyPanel> {
   void didUpdateWidget(covariant _ResponseBodyPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.response != widget.response) {
-      _tryParseJson();
+      _prepareResponseData();
     }
     if (widget.autoOpenFind && !_findBarVisible) {
       setState(() {
@@ -1461,15 +1826,56 @@ class _ResponseBodyPanelState extends State<_ResponseBodyPanel> {
     }
   }
 
-  void _tryParseJson() {
-    try {
-      final body = widget.response.body as String;
-      _parsedJson = jsonDecode(body);
-      _isJsonMode = true;
-    } catch (_) {
-      _parsedJson = null;
-      _isJsonMode = false;
+  Future<void> _prepareResponseData() async {
+    final gen = ++_parseGeneration;
+    _cachedRawImageDataText = null;
+
+    if (widget.response.isImage && widget.response.imageBytes != null) {
+      setState(() {
+        _isImageMode = true;
+        _isJsonMode = false;
+        _isParsing = false;
+        _parsedJson = null;
+        _formattedText = '';
+        _rawLines = const [];
+        _flatJsonRows = const [];
+        _collapsedPaths.clear();
+        _recomputeSearchMatches();
+      });
+      return;
     }
+
+    _isImageMode = false;
+    final rawBody = widget.response.body;
+
+    // For small payloads (< 25 KB), parse synchronously so there is zero frame delay.
+    // For larger payloads, offload JSON decoding, formatting, and node counting to a background Isolate.
+    if (rawBody.length <= 25000) {
+      final payload = _parseAndFormatResponseIsolate(rawBody);
+      _applyParsedPayload(payload);
+    } else {
+      setState(() {
+        _isParsing = true;
+      });
+      final payload = await compute(_parseAndFormatResponseIsolate, rawBody);
+      if (!mounted || gen != _parseGeneration) return;
+      setState(() {
+        _applyParsedPayload(payload);
+      });
+    }
+  }
+
+  void _applyParsedPayload(_ParsedResponsePayload payload) {
+    _isParsing = false;
+    _parsedJson = payload.parsedJson;
+    _formattedText = payload.formattedText;
+    _rawLines = payload.rawLines;
+    _isJsonMode = payload.parsedJson != null;
+    _collapsedPaths
+      ..clear()
+      ..addAll(payload.initialCollapsedPaths);
+    _rebuildFlatJsonRows();
+    _recomputeSearchMatches(autoExpandJsonMatches: _findQuery.isNotEmpty);
   }
 
   void _toggleFindBar() {
@@ -1477,6 +1883,7 @@ class _ResponseBodyPanelState extends State<_ResponseBodyPanel> {
       _findBarVisible = !_findBarVisible;
       if (_findBarVisible) {
         _currentMatchIndex = 0;
+        _recomputeSearchMatches(autoExpandJsonMatches: true);
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) {
             _findFocusNode.requestFocus();
@@ -1490,6 +1897,7 @@ class _ResponseBodyPanelState extends State<_ResponseBodyPanel> {
         _findQuery = '';
         _findController.clear();
         _currentMatchIndex = 0;
+        _matchedRowIndices = const [];
       }
     });
   }
@@ -1564,50 +1972,104 @@ class _ResponseBodyPanelState extends State<_ResponseBodyPanel> {
   @override
   Widget build(BuildContext context) {
     final res = widget.response;
-    final body = res.body as String;
-    final headers = res.headers as Map<String, String>;
+    final body = res.body;
+    final headers = res.headers;
+    final hasImage = res.isImage && res.imageBytes != null;
+    final activeMatchedRow = (_matchedRowIndices.isNotEmpty && _currentMatchIndex < _matchedRowIndices.length)
+        ? _matchedRowIndices[_currentMatchIndex]
+        : -1;
 
     return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // ── Summary bar ──────────────────────────────────────────────────
-          Container(
-            padding: const EdgeInsets.all(12),
-            margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surface,
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: AppColors.border),
-            ),
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: [
-                  StatusBadge(statusCode: res.statusCode, statusReason: res.statusReason),
-                  const SizedBox(width: 14),
-                  Icon(Icons.timer_outlined, size: 14, color: AppColors.textSecondary),
-                  const SizedBox(width: 4),
-                  Text('${res.durationMs} ms',
-                      style: TextStyle(fontSize: 12, fontFamily: 'monospace', color: AppColors.textMain)),
-                  const SizedBox(width: 14),
-                  Icon(Icons.data_usage_rounded, size: 14, color: AppColors.textSecondary),
-                  const SizedBox(width: 4),
-                  Text('${(res.sizeBytes / 1024).toStringAsFixed(1)} KB',
-                      style: TextStyle(fontSize: 12, color: AppColors.textMain)),
-                  const SizedBox(width: 16),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // ── Summary bar ──────────────────────────────────────────────────
+        Container(
+          padding: const EdgeInsets.all(12),
+          margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surface,
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: AppColors.border),
+          ),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                StatusBadge(statusCode: res.statusCode, statusReason: res.statusReason),
+                const SizedBox(width: 14),
+                Icon(Icons.timer_outlined, size: 14, color: AppColors.textSecondary),
+                const SizedBox(width: 4),
+                Text('${res.durationMs} ms',
+                    style: TextStyle(fontSize: 12, fontFamily: 'monospace', color: AppColors.textMain)),
+                const SizedBox(width: 14),
+                Icon(Icons.data_usage_rounded, size: 14, color: AppColors.textSecondary),
+                const SizedBox(width: 4),
+                Text('${(res.sizeBytes / 1024).toStringAsFixed(1)} KB',
+                    style: TextStyle(fontSize: 12, color: AppColors.textMain)),
+                const SizedBox(width: 16),
+                if (hasImage) ...[
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      setState(() {
+                        _isImageMode = !_isImageMode;
+                        _recomputeSearchMatches();
+                      });
+                    },
+                    icon: Icon(
+                      _isImageMode ? Icons.data_object : Icons.image_outlined,
+                      size: 13,
+                    ),
+                    label: Text(_isImageMode ? 'Raw Data' : 'Image Preview', style: const TextStyle(fontSize: 11)),
+                    style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6)),
+                  ),
+                  const SizedBox(width: 8),
+                  ElevatedButton.icon(
+                    onPressed: () => _downloadImage(context, res.imageBytes!, res.contentType),
+                    icon: const Icon(Icons.download_rounded, size: 13),
+                    label: const Text('Download Image', style: TextStyle(fontSize: 11)),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primary,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                ] else if (_parsedJson != null) ...[
                   // Toggle JSON / Raw
-                  if (_isJsonMode)
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      setState(() {
+                        _isJsonMode = !_isJsonMode;
+                        _recomputeSearchMatches(autoExpandJsonMatches: _isJsonMode);
+                      });
+                    },
+                    icon: Icon(
+                      _isJsonMode ? Icons.code : Icons.account_tree_outlined,
+                      size: 13,
+                    ),
+                    label: Text(_isJsonMode ? 'Raw Text' : 'JSON Tree', style: const TextStyle(fontSize: 11)),
+                    style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6)),
+                  ),
+                  const SizedBox(width: 8),
+                  if (_isJsonMode) ...[
                     OutlinedButton.icon(
-                      onPressed: () => setState(() => _isJsonMode = !_isJsonMode),
-                      icon: Icon(
-                        _isJsonMode ? Icons.code : Icons.account_tree_outlined,
-                        size: 13,
-                      ),
-                      label: Text(_isJsonMode ? 'Raw Text' : 'JSON Tree', style: const TextStyle(fontSize: 11)),
+                      onPressed: _expandAllNodes,
+                      icon: const Icon(Icons.unfold_more_rounded, size: 13),
+                      label: const Text('Expand All', style: TextStyle(fontSize: 11)),
                       style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6)),
                     ),
-                  const SizedBox(width: 8),
-                  // Find button
+                    const SizedBox(width: 6),
+                    OutlinedButton.icon(
+                      onPressed: _collapseAllNodes,
+                      icon: const Icon(Icons.unfold_less_rounded, size: 13),
+                      label: const Text('Collapse All', style: TextStyle(fontSize: 11)),
+                      style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6)),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                ],
+                // Find button (when not in image preview mode)
+                if (!_isImageMode) ...[
                   OutlinedButton.icon(
                     onPressed: _toggleFindBar,
                     icon: const Icon(Icons.search, size: 13),
@@ -1615,347 +2077,575 @@ class _ResponseBodyPanelState extends State<_ResponseBodyPanel> {
                     style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6)),
                   ),
                   const SizedBox(width: 8),
-                  // Copy body
-                  OutlinedButton.icon(
-                    onPressed: () {
-                      Clipboard.setData(ClipboardData(text: body));
+                ],
+                // Copy body / Copy Raw Data
+                OutlinedButton.icon(
+                  onPressed: () {
+                    if (hasImage && res.imageBytes != null) {
+                      final textToCopy = _isImageMode
+                          ? 'data:${res.contentType.isNotEmpty ? res.contentType.split(';').first.trim() : 'image/png'};base64,${base64Encode(res.imageBytes!)}'
+                          : _rawImageDataText;
+                      Clipboard.setData(ClipboardData(text: textToCopy));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            _isImageMode
+                                ? 'Image Base64 Data URI copied to clipboard!'
+                                : 'Raw image data copied to clipboard!',
+                          ),
+                        ),
+                      );
+                    } else {
+                      Clipboard.setData(ClipboardData(text: _formattedText.isNotEmpty ? _formattedText : body));
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(content: Text('Response body copied to clipboard!')),
                       );
-                    },
-                    icon: const Icon(Icons.copy, size: 13),
-                    label: const Text('Copy Body', style: TextStyle(fontSize: 11)),
-                    style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6)),
+                    }
+                  },
+                  icon: const Icon(Icons.copy, size: 13),
+                  label: Text(
+                    hasImage ? (_isImageMode ? 'Copy Base64' : 'Copy Raw Data') : 'Copy Body',
+                    style: const TextStyle(fontSize: 11),
                   ),
-                ],
-              ),
+                  style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6)),
+                ),
+              ],
             ),
           ),
+        ),
 
-          // ── Find bar ─────────────────────────────────────────────────────
-          if (_findBarVisible)
-            Container(
-              margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surface,
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(color: AppColors.primary.withValues(alpha: 0.5)),
-              ),
-              child: Row(
-                children: [
-                  Icon(Icons.search, size: 16, color: AppColors.textSecondary),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: TextField(
-                      controller: _findController,
-                      focusNode: _findFocusNode,
-                      onChanged: (v) {
-                        setState(() {
-                          _findQuery = v;
-                          _currentMatchIndex = 0;
-                        });
-                        if (v.isNotEmpty) {
-                          _scrollToCurrentMatch();
-                        }
-                      },
-                      onSubmitted: (_) => _nextMatch(),
-                      style: const TextStyle(fontSize: 13),
-                      decoration: const InputDecoration(
-                        hintText: 'Find in response...',
-                        border: InputBorder.none,
-                        isDense: true,
-                        contentPadding: EdgeInsets.zero,
-                      ),
+        // ── Find bar ─────────────────────────────────────────────────────
+        if (_findBarVisible)
+          Container(
+            margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surface,
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: AppColors.primary.withValues(alpha: 0.5)),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.search, size: 16, color: AppColors.textSecondary),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TextField(
+                    controller: _findController,
+                    focusNode: _findFocusNode,
+                    onChanged: (v) {
+                      setState(() {
+                        _findQuery = v;
+                        _currentMatchIndex = 0;
+                        _recomputeSearchMatches(autoExpandJsonMatches: true);
+                      });
+                      if (v.isNotEmpty) {
+                        _scrollToCurrentMatch();
+                      }
+                    },
+                    onSubmitted: (_) => _nextMatch(),
+                    style: const TextStyle(fontSize: 13),
+                    decoration: const InputDecoration(
+                      hintText: 'Find in response...',
+                      border: InputBorder.none,
+                      isDense: true,
+                      contentPadding: EdgeInsets.zero,
                     ),
                   ),
-                  if (_findQuery.isNotEmpty) ...[
-                    Text(
-                      _totalMatches > 0
-                          ? '${_currentMatchIndex + 1} of $_totalMatches'
-                          : 'No matches',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                        color: _totalMatches > 0
-                            ? AppColors.textSecondary
-                            : AppColors.methodDelete,
-                      ),
+                ),
+                if (_findQuery.isNotEmpty) ...[
+                  Text(
+                    _totalMatches > 0
+                        ? '${_currentMatchIndex + 1} of $_totalMatches'
+                        : 'No matches',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: _totalMatches > 0
+                          ? AppColors.textSecondary
+                          : AppColors.methodDelete,
                     ),
-                    const SizedBox(width: 4),
-                    // Move Up (Previous match)
-                    IconButton(
-                      icon: const Icon(Icons.keyboard_arrow_up, size: 18),
-                      tooltip: 'Previous match (Shift+Enter or ↑)',
-                      padding: const EdgeInsets.all(4),
-                      constraints: const BoxConstraints(),
-                      onPressed: _totalMatches > 0 ? _previousMatch : null,
-                    ),
-                    const SizedBox(width: 2),
-                    // Move Down (Next match)
-                    IconButton(
-                      icon: const Icon(Icons.keyboard_arrow_down, size: 18),
-                      tooltip: 'Next match (Enter or ↓)',
-                      padding: const EdgeInsets.all(4),
-                      constraints: const BoxConstraints(),
-                      onPressed: _totalMatches > 0 ? _nextMatch : null,
-                    ),
-                    const SizedBox(width: 6),
-                  ],
+                  ),
+                  const SizedBox(width: 4),
+                  // Move Up (Previous match)
                   IconButton(
-                    icon: const Icon(Icons.close, size: 16),
-                    tooltip: 'Close (Esc)',
-                    onPressed: _toggleFindBar,
+                    icon: const Icon(Icons.keyboard_arrow_up, size: 18),
+                    tooltip: 'Previous match (Shift+Enter or ↑)',
                     padding: const EdgeInsets.all(4),
                     constraints: const BoxConstraints(),
+                    onPressed: _totalMatches > 0 ? _previousMatch : null,
                   ),
+                  const SizedBox(width: 2),
+                  // Move Down (Next match)
+                  IconButton(
+                    icon: const Icon(Icons.keyboard_arrow_down, size: 18),
+                    tooltip: 'Next match (Enter or ↓)',
+                    padding: const EdgeInsets.all(4),
+                    constraints: const BoxConstraints(),
+                    onPressed: _totalMatches > 0 ? _nextMatch : null,
+                  ),
+                  const SizedBox(width: 6),
                 ],
-              ),
-            ),
-
-          const SizedBox(height: 12),
-
-          // ── Body label ───────────────────────────────────────────────────
-          const Padding(
-            padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
-            child: Text('Response Body', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-          ),
-
-          // ── Body content ─────────────────────────────────────────────────
-          Expanded(
-            child: SingleChildScrollView(
-              controller: _bodyScrollController,
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Body
-                  Container(
-                    width: double.infinity,
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.surface,
-                      borderRadius: BorderRadius.circular(6),
-                      border: Border.all(color: AppColors.border),
-                    ),
-                    padding: const EdgeInsets.all(12),
-                    child: _isJsonMode && _parsedJson != null
-                        ? _JsonTreeView(
-                            data: _parsedJson,
-                            highlight: _findQuery,
-                            activeMatchIndex: _currentMatchIndex,
-                          )
-                        : _HighlightedText(
-                            text: _formatResponseBodyStatic(body),
-                            highlight: _findQuery,
-                            activeMatchIndex: _currentMatchIndex,
-                          ),
-                  ),
-
-                  const SizedBox(height: 20),
-
-                  // Headers
-                  Text('Response Headers (${headers.length})',
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                  const SizedBox(height: 8),
-                  Container(
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.surface,
-                      borderRadius: BorderRadius.circular(6),
-                      border: Border.all(color: AppColors.border),
-                    ),
-                    child: Column(
-                      children: headers.entries.map((e) {
-                        return Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                          decoration: BoxDecoration(
-                            border: Border(bottom: BorderSide(color: AppColors.borderSubtle)),
-                          ),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(
-                                flex: 2,
-                                child: SelectableText(
-                                  e.key,
-                                  style: TextStyle(
-                                      color: AppColors.primaryHover, fontSize: 12, fontFamily: 'monospace'),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                flex: 3,
-                                child: SelectableText(
-                                  e.value,
-                                  style: TextStyle(
-                                      color: AppColors.textMain, fontSize: 12, fontFamily: 'monospace'),
-                                ),
-                              ),
-                            ],
-                          ),
-                        );
-                      }).toList(),
-                    ),
-                  ),
-                ],
-              ),
+                IconButton(
+                  icon: const Icon(Icons.close, size: 16),
+                  tooltip: 'Close (Esc)',
+                  onPressed: _toggleFindBar,
+                  padding: const EdgeInsets.all(4),
+                  constraints: const BoxConstraints(),
+                ),
+              ],
             ),
           ),
-        ],
-      );
-  }
 
-  static String _formatResponseBodyStatic(String raw) {
-    if (raw.trim().isEmpty) return '[Empty Response Body]';
-    try {
-      final decoded = jsonDecode(raw);
-      const encoder = JsonEncoder.withIndent('  ');
-      return encoder.convert(decoded);
-    } catch (_) {
-      return raw;
-    }
-  }
-}
+        const SizedBox(height: 12),
 
-// =============================================================================
-// _HighlightedText – SelectableText with search highlights
-// =============================================================================
-class _HighlightedText extends StatelessWidget {
-  final String text;
-  final String highlight;
-  final int activeMatchIndex;
-
-  const _HighlightedText({
-    required this.text,
-    required this.highlight,
-    this.activeMatchIndex = 0,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    if (highlight.isEmpty) {
-      return SelectableText(
-        text,
-        style: TextStyle(fontFamily: 'monospace', fontSize: 12, height: 1.4, color: AppColors.textMain),
-      );
-    }
-
-    final spans = <TextSpan>[];
-    final regex = RegExp(RegExp.escape(highlight), caseSensitive: false);
-    int last = 0;
-    int matchIdx = 0;
-    for (final m in regex.allMatches(text)) {
-      if (m.start > last) {
-        spans.add(TextSpan(
-          text: text.substring(last, m.start),
-          style: TextStyle(fontFamily: 'monospace', fontSize: 12, height: 1.4, color: AppColors.textMain),
-        ));
-      }
-      final isActive = matchIdx == activeMatchIndex;
-      spans.add(TextSpan(
-        text: text.substring(m.start, m.end),
-        style: TextStyle(
-          fontFamily: 'monospace',
-          fontSize: 12,
-          height: 1.4,
-          color: Colors.black,
-          backgroundColor: isActive ? const Color(0xFFFF9800) : const Color(0xFFFFD700),
-          fontWeight: isActive ? FontWeight.w900 : FontWeight.bold,
+        // ── Body label ───────────────────────────────────────────────────
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+          child: Row(
+            children: [
+              const Text('Response Body', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+              if (hasImage) ...[
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    res.contentType.isNotEmpty ? res.contentType.split(';').first.toUpperCase() : 'IMAGE',
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.primaryHover,
+                      fontFamily: 'monospace',
+                    ),
+                  ),
+                ),
+                const Spacer(),
+                ChoiceChip(
+                  label: const Text('Image Preview', style: TextStyle(fontSize: 11)),
+                  selected: _isImageMode,
+                  onSelected: (_) => setState(() => _isImageMode = true),
+                  selectedColor: AppColors.primary.withValues(alpha: 0.25),
+                  visualDensity: VisualDensity.compact,
+                ),
+                const SizedBox(width: 6),
+                ChoiceChip(
+                  label: const Text('Raw Data', style: TextStyle(fontSize: 11)),
+                  selected: !_isImageMode,
+                  onSelected: (_) {
+                    setState(() {
+                      _isImageMode = false;
+                      _recomputeSearchMatches();
+                    });
+                  },
+                  selectedColor: AppColors.primary.withValues(alpha: 0.25),
+                  visualDensity: VisualDensity.compact,
+                ),
+              ],
+            ],
+          ),
         ),
-      ));
-      matchIdx++;
-      last = m.end;
+
+        // ── Virtualized Body & Headers Content ───────────────────────────
+        Expanded(
+          child: _isParsing
+              ? Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(strokeWidth: 2.5),
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        'Formatting large response (${(res.sizeBytes / 1024).toStringAsFixed(1)} KB)...',
+                        style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                      ),
+                    ],
+                  ),
+                )
+              : CustomScrollView(
+                  controller: _bodyScrollController,
+                  slivers: [
+                    if (hasImage && _isImageMode)
+                      SliverPadding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        sliver: SliverToBoxAdapter(
+                          child: Container(
+                            width: double.infinity,
+                            decoration: BoxDecoration(
+                              color: Theme.of(context).colorScheme.surface,
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(color: AppColors.border),
+                            ),
+                            padding: const EdgeInsets.all(12),
+                            child: _ImageResponsePreview(
+                              bytes: res.imageBytes!,
+                              contentType: res.contentType,
+                              rawBody: body,
+                              onDownload: () => _downloadImage(context, res.imageBytes!, res.contentType),
+                            ),
+                          ),
+                        ),
+                      )
+                    else if (_isJsonMode && _parsedJson != null)
+                      SliverPadding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        sliver: DecoratedSliver(
+                          decoration: BoxDecoration(
+                            color: Theme.of(context).colorScheme.surface,
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(color: AppColors.border),
+                          ),
+                          sliver: SliverPadding(
+                            padding: const EdgeInsets.all(12),
+                            sliver: SliverList.builder(
+                              itemCount: _flatJsonRows.length,
+                              itemBuilder: (context, index) {
+                                final row = _flatJsonRows[index];
+                                return _VirtualJsonRowWidget(
+                                  row: row,
+                                  highlight: _findQuery,
+                                  isActiveMatch: index == activeMatchedRow,
+                                  onToggleExpand: () => _toggleNodeExpansion(row.path),
+                                );
+                              },
+                            ),
+                          ),
+                        ),
+                      )
+                    else
+                      SliverPadding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        sliver: DecoratedSliver(
+                          decoration: BoxDecoration(
+                            color: Theme.of(context).colorScheme.surface,
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(color: AppColors.border),
+                          ),
+                          sliver: SliverPadding(
+                            padding: const EdgeInsets.all(12),
+                            sliver: SliverList.builder(
+                              itemCount: _activeRawLines.length,
+                              itemBuilder: (context, index) {
+                                final line = _activeRawLines[index];
+                                return _VirtualRawLineWidget(
+                                  line: line,
+                                  highlight: _findQuery,
+                                  isActiveMatch: index == activeMatchedRow,
+                                );
+                              },
+                            ),
+                          ),
+                        ),
+                      ),
+
+                    // ── Response Headers Section ─────────────────────────
+                    SliverPadding(
+                      padding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
+                      sliver: SliverToBoxAdapter(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('Response Headers (${headers.length})',
+                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                            const SizedBox(height: 8),
+                            Container(
+                              decoration: BoxDecoration(
+                                color: Theme.of(context).colorScheme.surface,
+                                borderRadius: BorderRadius.circular(6),
+                                border: Border.all(color: AppColors.border),
+                              ),
+                              child: Column(
+                                children: headers.entries.map((e) {
+                                  return Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                    decoration: BoxDecoration(
+                                      border: Border(bottom: BorderSide(color: AppColors.borderSubtle)),
+                                    ),
+                                    child: Row(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Expanded(
+                                          flex: 2,
+                                          child: SelectableText(
+                                            e.key,
+                                            style: TextStyle(
+                                                color: AppColors.primaryHover, fontSize: 12, fontFamily: 'monospace'),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Expanded(
+                                          flex: 3,
+                                          child: SelectableText(
+                                            e.value,
+                                            style: TextStyle(
+                                                color: AppColors.textMain, fontSize: 12, fontFamily: 'monospace'),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                }).toList(),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+        ),
+      ],
+    );
+  }
+
+  static String _detectImageExtension(Uint8List bytes, String contentType) {
+    final ct = contentType.toLowerCase();
+    if (ct.contains('png')) return 'png';
+    if (ct.contains('jpeg') || ct.contains('jpg')) return 'jpg';
+    if (ct.contains('gif')) return 'gif';
+    if (ct.contains('webp')) return 'webp';
+    if (ct.contains('bmp')) return 'bmp';
+    if (ct.contains('svg')) return 'svg';
+    if (ct.contains('icon') || ct.contains('ico')) return 'ico';
+
+    if (bytes.length >= 8 &&
+        bytes[0] == 0x89 &&
+        bytes[1] == 0x50 &&
+        bytes[2] == 0x4E &&
+        bytes[3] == 0x47) {
+      return 'png';
     }
-    if (last < text.length) {
-      spans.add(TextSpan(
-        text: text.substring(last),
-        style: TextStyle(fontFamily: 'monospace', fontSize: 12, height: 1.4, color: AppColors.textMain),
-      ));
+    if (bytes.length >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF) {
+      return 'jpg';
     }
+    if (bytes.length >= 6 &&
+        bytes[0] == 0x47 &&
+        bytes[1] == 0x49 &&
+        bytes[2] == 0x46 &&
+        bytes[3] == 0x38) {
+      return 'gif';
+    }
+    if (bytes.length >= 12 &&
+        bytes[0] == 0x52 &&
+        bytes[1] == 0x49 &&
+        bytes[2] == 0x46 &&
+        bytes[3] == 0x46 &&
+        bytes[8] == 0x57 &&
+        bytes[9] == 0x45 &&
+        bytes[10] == 0x42 &&
+        bytes[11] == 0x50) {
+      return 'webp';
+    }
+    if (bytes.length >= 2 && bytes[0] == 0x42 && bytes[1] == 0x4D) {
+      return 'bmp';
+    }
+    return 'png';
+  }
 
-    return SelectableText.rich(TextSpan(children: spans));
+  Future<void> _downloadImage(BuildContext context, Uint8List bytes, String contentType) async {
+    try {
+      if (Platform.isMacOS) {
+        await FilePickerPlatform.instance.skipEntitlementsChecks();
+      }
+      final selectedDirectory = await FilePicker.getDirectoryPath(
+        dialogTitle: 'Select Folder to Download Image',
+      );
+      if (selectedDirectory == null) return;
+
+      final ext = _detectImageExtension(bytes, contentType);
+      final fileName = 'apilab_image_${DateTime.now().millisecondsSinceEpoch}.$ext';
+      final filePath = '$selectedDirectory${Platform.pathSeparator}$fileName';
+      final file = File(filePath);
+      await file.writeAsBytes(bytes);
+
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Image saved to: $filePath')),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to save image: $e')),
+        );
+      }
+    }
   }
 }
 
 // =============================================================================
-// _SearchMatchTracker & Scope for JSON tree match navigation
+// _ImageResponsePreview – displays the image response and download button
 // =============================================================================
-class _SearchMatchTracker {
-  int count = 0;
-  final int activeIndex;
-  _SearchMatchTracker({required this.activeIndex});
+class _ImageResponsePreview extends StatelessWidget {
+  final Uint8List bytes;
+  final String contentType;
+  final String rawBody;
+  final VoidCallback onDownload;
 
-  bool nextMatchIsActive() {
-    final isActive = count == activeIndex;
-    count++;
-    return isActive;
-  }
-}
-
-class _SearchMatchScope extends InheritedWidget {
-  final _SearchMatchTracker tracker;
-  const _SearchMatchScope({required this.tracker, required super.child});
-
-  static _SearchMatchTracker? of(BuildContext context) {
-    return context.dependOnInheritedWidgetOfExactType<_SearchMatchScope>()?.tracker;
-  }
-
-  @override
-  bool updateShouldNotify(_SearchMatchScope oldWidget) => true;
-}
-
-// =============================================================================
-// _JsonTreeView – collapsible JSON tree
-// =============================================================================
-class _JsonTreeView extends StatelessWidget {
-  final dynamic data;
-  final String highlight;
-  final int activeMatchIndex;
-
-  const _JsonTreeView({
-    required this.data,
-    required this.highlight,
-    this.activeMatchIndex = 0,
+  const _ImageResponsePreview({
+    required this.bytes,
+    required this.contentType,
+    required this.rawBody,
+    required this.onDownload,
   });
 
   @override
   Widget build(BuildContext context) {
-    return _SearchMatchScope(
-      tracker: _SearchMatchTracker(activeIndex: activeMatchIndex),
-      child: _JsonNode(data: data, highlight: highlight, depth: 0, isRoot: true),
+    final isSvg = contentType.toLowerCase().contains('svg');
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Align(
+          alignment: Alignment.centerRight,
+          child: ElevatedButton.icon(
+            onPressed: onDownload,
+            icon: const Icon(Icons.download_rounded, size: 14),
+            label: const Text('Download Image', style: TextStyle(fontSize: 12)),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Center(
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: Image.memory(
+              bytes,
+              fit: BoxFit.contain,
+              errorBuilder: (context, error, stackTrace) {
+                return Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: AppColors.surface,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.broken_image_outlined, size: 36, color: AppColors.textMuted),
+                      const SizedBox(height: 8),
+                      Text(
+                        isSvg
+                            ? 'SVG vector image received (${bytes.length} bytes)'
+                            : 'Unable to decode image preview (${bytes.length} bytes)',
+                        style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                      ),
+                      if (isSvg && rawBody.isNotEmpty) ...[
+                        const SizedBox(height: 12),
+                        Text(
+                          rawBody,
+                          style: TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: 11,
+                            color: AppColors.textMain,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
 
-class _JsonNode extends StatefulWidget {
-  final dynamic data;
-  final String highlight;
-  final int depth;
-  final bool isRoot;
-  final String? keyLabel;
+// =============================================================================
+// Virtualized Raw Line & JSON Row Widgets (O(1) visible viewport rendering)
+// =============================================================================
+TextSpan _buildHighlightedSpan({
+  required String text,
+  required TextStyle baseStyle,
+  required String highlight,
+  required bool isActiveRow,
+}) {
+  if (highlight.isEmpty || !text.toLowerCase().contains(highlight.toLowerCase())) {
+    return TextSpan(text: text, style: baseStyle);
+  }
 
-  const _JsonNode({
-    super.key,
-    required this.data,
+  final spans = <TextSpan>[];
+  final regex = RegExp(RegExp.escape(highlight), caseSensitive: false);
+  int last = 0;
+  for (final m in regex.allMatches(text)) {
+    if (m.start > last) {
+      spans.add(TextSpan(text: text.substring(last, m.start), style: baseStyle));
+    }
+    spans.add(TextSpan(
+      text: text.substring(m.start, m.end),
+      style: baseStyle.copyWith(
+        color: Colors.black,
+        backgroundColor: isActiveRow ? const Color(0xFFFF9800) : const Color(0xFFFFD700),
+        fontWeight: isActiveRow ? FontWeight.w900 : FontWeight.bold,
+      ),
+    ));
+    last = m.end;
+  }
+  if (last < text.length) {
+    spans.add(TextSpan(text: text.substring(last), style: baseStyle));
+  }
+  return TextSpan(children: spans);
+}
+
+class _VirtualRawLineWidget extends StatelessWidget {
+  final String line;
+  final String highlight;
+  final bool isActiveMatch;
+
+  const _VirtualRawLineWidget({
+    required this.line,
     required this.highlight,
-    required this.depth,
-    this.isRoot = false,
-    this.keyLabel,
+    required this.isActiveMatch,
   });
 
   @override
-  State<_JsonNode> createState() => _JsonNodeState();
+  Widget build(BuildContext context) {
+    final baseStyle = TextStyle(
+      fontFamily: 'monospace',
+      fontSize: 12,
+      height: 1.4,
+      color: AppColors.textMain,
+    );
+
+    if (highlight.isEmpty) {
+      return SelectableText(line.isEmpty ? ' ' : line, style: baseStyle);
+    }
+
+    return SelectableText.rich(
+      _buildHighlightedSpan(
+        text: line.isEmpty ? ' ' : line,
+        baseStyle: baseStyle,
+        highlight: highlight,
+        isActiveRow: isActiveMatch,
+      ),
+    );
+  }
 }
 
-class _JsonNodeState extends State<_JsonNode> {
-  bool _expanded = true;
+class _VirtualJsonRowWidget extends StatelessWidget {
+  final _FlatJsonRow row;
+  final String highlight;
+  final bool isActiveMatch;
+  final VoidCallback onToggleExpand;
 
-  bool get _isExpandable => widget.data is Map || widget.data is List;
-
-  String _preview(dynamic data) {
-    if (data is Map) return data.isEmpty ? '{}' : '{…} (${data.length} key${data.length == 1 ? '' : 's'})';
-    if (data is List) return data.isEmpty ? '[]' : '[…] (${data.length} item${data.length == 1 ? '' : 's'})';
-    return '';
-  }
+  const _VirtualJsonRowWidget({
+    required this.row,
+    required this.highlight,
+    required this.isActiveMatch,
+    required this.onToggleExpand,
+  });
 
   Color _valueColor(dynamic v) {
     if (v == null) return AppColors.jsonNull;
@@ -1973,285 +2663,106 @@ class _JsonNodeState extends State<_JsonNode> {
 
   @override
   Widget build(BuildContext context) {
-    final indent = widget.depth * 16.0;
-    final data = widget.data;
+    final indent = row.depth * 16.0;
+    final keyStyle = TextStyle(fontSize: 12, color: AppColors.primaryHover, fontFamily: 'monospace');
+    final punctStyle = TextStyle(fontSize: 12, color: AppColors.textSecondary, fontFamily: 'monospace');
 
-    if (_isExpandable) {
-      final isMap = data is Map;
-      final openBracket = isMap ? '{' : '[';
-      final closeBracket = isMap ? '}' : ']';
+    switch (row.kind) {
+      case _FlatJsonRowKind.expandableHeader:
+        final openBracket = row.isMap ? '{' : '[';
+        final closeBracket = row.isMap ? '}' : ']';
+        final preview = row.isMap
+            ? (row.childCount == 0 ? '{}' : '{…} (${row.childCount} key${row.childCount == 1 ? '' : 's'})')
+            : (row.childCount == 0 ? '[]' : '[…] (${row.childCount} item${row.childCount == 1 ? '' : 's'})');
 
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Header row (key + bracket + toggle)
-          Padding(
-            padding: EdgeInsets.only(left: indent),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                InkWell(
-                  onTap: () => setState(() => _expanded = !_expanded),
-                  borderRadius: BorderRadius.circular(4),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
-                    child: Icon(
-                      _expanded ? Icons.arrow_drop_down : Icons.arrow_right,
-                      size: 16,
-                      color: AppColors.textMuted,
-                    ),
+        return Padding(
+          padding: EdgeInsets.only(left: indent, top: 1, bottom: 1),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              InkWell(
+                onTap: onToggleExpand,
+                borderRadius: BorderRadius.circular(4),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
+                  child: Icon(
+                    row.isExpanded ? Icons.arrow_drop_down : Icons.arrow_right,
+                    size: 16,
+                    color: AppColors.textMuted,
                   ),
                 ),
-                if (widget.keyLabel != null) ...[
-                  _KeyText(text: widget.keyLabel!, highlight: widget.highlight),
-                  Text(': ', style: TextStyle(fontSize: 12, color: AppColors.textMuted, fontFamily: 'monospace')),
-                ],
-                InkWell(
-                  onTap: () => setState(() => _expanded = !_expanded),
-                  borderRadius: BorderRadius.circular(4),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          _expanded ? openBracket : _preview(data),
-                          style: TextStyle(fontSize: 12, color: AppColors.textSecondary, fontFamily: 'monospace'),
-                        ),
-                        if (!_expanded) ...[
-                          const SizedBox(width: 4),
-                          Text(
-                            closeBracket,
-                            style: TextStyle(fontSize: 12, color: AppColors.textSecondary, fontFamily: 'monospace'),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          // Children (when expanded)
-          if (_expanded) ...[
-            if (isMap) ...[
-              for (final e in (data as Map<Object?, Object?>).entries)
-                _JsonNode(
-                  key: ValueKey(e.key),
-                  data: e.value,
-                  highlight: widget.highlight,
-                  depth: widget.depth + 1,
-                  keyLabel: '${e.key}',
-                ),
-            ] else ...[
-              for (final e in (data as List<dynamic>).asMap().entries)
-                _JsonNode(
-                  key: ValueKey(e.key),
-                  data: e.value,
-                  highlight: widget.highlight,
-                  depth: widget.depth + 1,
-                  keyLabel: '[${e.key}]',
-                ),
-            ],
-            // Closing bracket
-            Padding(
-              padding: EdgeInsets.only(left: indent + 16),
-              child: Text(
-                closeBracket,
-                style: TextStyle(fontSize: 12, color: AppColors.textSecondary, fontFamily: 'monospace'),
               ),
-            ),
-          ],
-        ],
-      );
-    }
-
-    // Leaf value
-    return Padding(
-      padding: EdgeInsets.only(left: indent + 16),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (widget.keyLabel != null) ...[
-            _KeyText(text: widget.keyLabel!, highlight: widget.highlight),
-            Text(': ', style: TextStyle(fontSize: 12, color: AppColors.textMuted, fontFamily: 'monospace')),
-          ],
-          Flexible(
-            child: _ValueText(text: _stringify(data), color: _valueColor(data), highlight: widget.highlight),
+              if (row.keyLabel != null) ...[
+                SelectableText.rich(
+                  _buildHighlightedSpan(
+                    text: row.keyLabel!.startsWith('[') ? row.keyLabel! : '"${row.keyLabel!}"',
+                    baseStyle: keyStyle,
+                    highlight: highlight,
+                    isActiveRow: isActiveMatch,
+                  ),
+                ),
+                Text(': ', style: punctStyle),
+              ],
+              InkWell(
+                onTap: onToggleExpand,
+                borderRadius: BorderRadius.circular(4),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
+                  child: Text(
+                    row.isExpanded ? openBracket : '$preview $closeBracket',
+                    style: punctStyle,
+                  ),
+                ),
+              ),
+            ],
           ),
-        ],
-      ),
-    );
-  }
-}
-
-// Highlighted selectable key text
-class _KeyText extends StatelessWidget {
-  final String text;
-  final String highlight;
-
-  const _KeyText({required this.text, required this.highlight});
-
-  @override
-  Widget build(BuildContext context) {
-    final style = TextStyle(fontSize: 12, color: AppColors.primaryHover, fontFamily: 'monospace');
-    final displayText = '"$text"';
-
-    ContextMenuButtonItem buildCopyKeyItem(EditableTextState editableTextState) {
-      return ContextMenuButtonItem(
-        onPressed: () {
-          Clipboard.setData(ClipboardData(text: text));
-          editableTextState.hideToolbar();
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Copied key "$text" to clipboard'),
-              duration: const Duration(seconds: 1),
-            ),
-          );
-        },
-        label: 'Copy Key Name',
-      );
-    }
-
-    if (highlight.isEmpty || !displayText.toLowerCase().contains(highlight.toLowerCase())) {
-      return SelectableText(
-        displayText,
-        style: style,
-        contextMenuBuilder: (context, editableTextState) {
-          final buttonItems = editableTextState.contextMenuButtonItems;
-          return AdaptiveTextSelectionToolbar.buttonItems(
-            anchors: editableTextState.contextMenuAnchors,
-            buttonItems: [
-              ...buttonItems,
-              buildCopyKeyItem(editableTextState),
-            ],
-          );
-        },
-      );
-    }
-
-    final spans = <TextSpan>[];
-    final regex = RegExp(RegExp.escape(highlight), caseSensitive: false);
-    final tracker = _SearchMatchScope.of(context);
-    int last = 0;
-    for (final m in regex.allMatches(displayText)) {
-      if (m.start > last) {
-        spans.add(TextSpan(text: displayText.substring(last, m.start), style: style));
-      }
-      final isActive = tracker?.nextMatchIsActive() ?? false;
-      spans.add(TextSpan(
-        text: displayText.substring(m.start, m.end),
-        style: style.copyWith(
-          backgroundColor: isActive ? const Color(0xFFFF9800) : const Color(0xFFFFD700),
-          color: Colors.black,
-          fontWeight: isActive ? FontWeight.w900 : FontWeight.bold,
-        ),
-      ));
-      last = m.end;
-    }
-    if (last < displayText.length) {
-      spans.add(TextSpan(text: displayText.substring(last), style: style));
-    }
-
-    return SelectableText.rich(
-      TextSpan(children: spans),
-      contextMenuBuilder: (context, editableTextState) {
-        final buttonItems = editableTextState.contextMenuButtonItems;
-        return AdaptiveTextSelectionToolbar.buttonItems(
-          anchors: editableTextState.contextMenuAnchors,
-          buttonItems: [
-            ...buttonItems,
-            buildCopyKeyItem(editableTextState),
-          ],
         );
-      },
-    );
-  }
-}
 
-// Highlighted selectable value text
-class _ValueText extends StatelessWidget {
-  final String text;
-  final Color color;
-  final String highlight;
-
-  const _ValueText({required this.text, required this.color, required this.highlight});
-
-  @override
-  Widget build(BuildContext context) {
-    final style = TextStyle(fontSize: 12, color: color, fontFamily: 'monospace');
-
-    ContextMenuButtonItem buildCopyValueItem(EditableTextState editableTextState) {
-      return ContextMenuButtonItem(
-        onPressed: () {
-          final cleanText = (text.startsWith('"') && text.endsWith('"') && text.length >= 2)
-              ? text.substring(1, text.length - 1)
-              : text;
-          Clipboard.setData(ClipboardData(text: cleanText));
-          editableTextState.hideToolbar();
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Copied value to clipboard'),
-              duration: Duration(seconds: 1),
-            ),
-          );
-        },
-        label: 'Copy Value',
-      );
-    }
-
-    if (highlight.isEmpty || !text.toLowerCase().contains(highlight.toLowerCase())) {
-      return SelectableText(
-        text,
-        style: style,
-        contextMenuBuilder: (context, editableTextState) {
-          final buttonItems = editableTextState.contextMenuButtonItems;
-          return AdaptiveTextSelectionToolbar.buttonItems(
-            anchors: editableTextState.contextMenuAnchors,
-            buttonItems: [
-              ...buttonItems,
-              buildCopyValueItem(editableTextState),
-            ],
-          );
-        },
-      );
-    }
-    final spans = <TextSpan>[];
-    final regex = RegExp(RegExp.escape(highlight), caseSensitive: false);
-    final tracker = _SearchMatchScope.of(context);
-    int last = 0;
-    for (final m in regex.allMatches(text)) {
-      if (m.start > last) {
-        spans.add(TextSpan(text: text.substring(last, m.start), style: style));
-      }
-      final isActive = tracker?.nextMatchIsActive() ?? false;
-      spans.add(TextSpan(
-        text: text.substring(m.start, m.end),
-        style: style.copyWith(
-          backgroundColor: isActive ? const Color(0xFFFF9800) : const Color(0xFFFFD700),
-          color: Colors.black,
-          fontWeight: isActive ? FontWeight.w900 : FontWeight.bold,
-        ),
-      ));
-      last = m.end;
-    }
-    if (last < text.length) {
-      spans.add(TextSpan(text: text.substring(last), style: style));
-    }
-    return SelectableText.rich(
-      TextSpan(children: spans),
-      contextMenuBuilder: (context, editableTextState) {
-        final buttonItems = editableTextState.contextMenuButtonItems;
-        return AdaptiveTextSelectionToolbar.buttonItems(
-          anchors: editableTextState.contextMenuAnchors,
-          buttonItems: [
-            ...buttonItems,
-            buildCopyValueItem(editableTextState),
-          ],
+      case _FlatJsonRowKind.closingBracket:
+        return Padding(
+          padding: EdgeInsets.only(left: indent + 16.0, top: 1, bottom: 1),
+          child: Text(
+            row.isMap ? '}' : ']',
+            style: punctStyle,
+          ),
         );
-      },
-    );
+
+      case _FlatJsonRowKind.leaf:
+        final valText = _stringify(row.value);
+        final valStyle = TextStyle(fontSize: 12, color: _valueColor(row.value), fontFamily: 'monospace');
+
+        return Padding(
+          padding: EdgeInsets.only(left: indent + 16.0, top: 1, bottom: 1),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: SelectableText.rich(
+                  TextSpan(
+                    children: [
+                      if (row.keyLabel != null) ...[
+                        _buildHighlightedSpan(
+                          text: row.keyLabel!.startsWith('[') ? row.keyLabel! : '"${row.keyLabel!}"',
+                          baseStyle: keyStyle,
+                          highlight: highlight,
+                          isActiveRow: isActiveMatch,
+                        ),
+                        TextSpan(text: ': ', style: punctStyle),
+                      ],
+                      _buildHighlightedSpan(
+                        text: valText,
+                        baseStyle: valStyle,
+                        highlight: highlight,
+                        isActiveRow: isActiveMatch,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+    }
   }
 }
 
